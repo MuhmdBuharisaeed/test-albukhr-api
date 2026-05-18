@@ -11,10 +11,12 @@ app.use(express.json());
    PI SDK INIT
 =============================== */
 
-Pi.init({
+const PiNetwork = require("pi-backend");
+
+const pi = new PiNetwork({
   apiKey: process.env.PI_API_KEY,
   walletPrivateSeed: process.env.WALLET_PRIVATE_SEED,
-  sandbox: true
+  network: "Pi Network"
 });
 
 /* ===============================
@@ -52,7 +54,7 @@ app.post("/approve-payment", async (req, res) => {
 
     console.log("APPROVING PAYMENT:", paymentId);
 
-    const payment = await Pi.approvePayment(paymentId);
+    const payment = await pi.approvePayment(paymentId);
 
     console.log("APPROVED SUCCESS");
 
@@ -92,7 +94,7 @@ app.post("/complete-payment", async (req, res) => {
     console.log("COMPLETING PAYMENT:", paymentId);
 
     const payment =
-      await Pi.completePayment(paymentId, txid);
+      await pi.completePayment(paymentId, txid);
 
     console.log("COMPLETE SUCCESS");
 
