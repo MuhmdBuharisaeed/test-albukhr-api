@@ -18,56 +18,66 @@ app.get("/", (req, res) => {
   res.send("ALBUKHR PI PAYMENT API RUNNING");
 });
 
-// APPROVE PAYMENT
+// APPROVE
 app.post("/approve-payment", async (req, res) => {
+
   try {
+
     const paymentId = req.body.paymentId;
 
-    console.log("APPROVING PAYMENT:", paymentId);
+    console.log("APPROVING:", paymentId);
 
     await pi.approvePayment(paymentId);
 
-res.json({
-  success: true,
-  paymentId
-});
+    res.json({
+      success: true,
+      paymentId
+    });
 
   } catch (error) {
-    console.log("APPROVE ERROR:", error.message);
+
+    console.log(error);
 
     res.status(500).json({
       error: error.message
     });
+
   }
+
 });
 
-// COMPLETE PAYMENT
+// COMPLETE
 app.post("/complete-payment", async (req, res) => {
+
   try {
+
     const paymentId = req.body.paymentId;
     const txid = req.body.txid;
 
-    console.log("COMPLETING PAYMENT:", paymentId);
+    console.log("COMPLETING:", paymentId);
 
     await pi.completePayment(paymentId, txid);
 
-res.json({
-  success: true,
-  paymentId,
-  txid
-});
+    res.json({
+      success: true,
+      paymentId,
+      txid
+    });
 
   } catch (error) {
-    console.log("COMPLETE ERROR:", error.message);
+
+    console.log(error);
 
     res.status(500).json({
       error: error.message
     });
+
   }
+
 });
 
 const PORT = process.env.PORT || 8080;
 
 app.listen(PORT, () => {
-  console.log(`ALBUKHR PAYMENT SERVER RUNNING ON PORT ${PORT}`);
+  console.log("SERVER RUNNING");
 });
