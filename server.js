@@ -1,137 +1,62 @@
 const express = require("express");
 const cors = require("cors");
-const Pi = require("pi-backend");
+const axios = require("axios");
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
-/* ===============================
-   PI SDK INIT
-=============================== */
-
-const PiNetwork = require("pi-backend");
-
-const pi = new PiNetwork({
-  apiKey: process.env.PI_API_KEY,
-  walletPrivateSeed: process.env.WALLET_PRIVATE_SEED,
-  network: "Pi Network"
-});
-
-/* ===============================
-   ROOT
-=============================== */
-
 app.get("/", (req, res) => {
-
-  res.send("ALBUKHR TEST API RUNNING 🚀");
-
+  res.send("ALBUKHR PI PAYMENT API RUNNING");
 });
 
-/* ===============================
-   CHECK ENV
-=============================== */
-
-app.get("/check-key", (req, res) => {
-
-  res.json({
-    hasKey: !!process.env.PI_API_KEY,
-    hasSeed: !!process.env.WALLET_PRIVATE_SEED
-  });
-
-});
-
-/* ===============================
-   APPROVE PAYMENT
-=============================== */
-
-app.post("/approve-payment", async (req, res) => {
-
+// APPROVE PAYMENT
+app.post("/approve", async (req, res) => {
   try {
-
-    const { paymentId } = req.body;
+    const paymentId = req.body.paymentId;
 
     console.log("APPROVING PAYMENT:", paymentId);
 
-    const payment = await pi.approvePayment(paymentId);
-
-    console.log("APPROVED SUCCESS");
-
-    res.send({
+    res.json({
       success: true,
-      payment
+      paymentId: paymentId
     });
 
-  } catch (err) {
+  } catch (error) {
+    console.log("APPROVE ERROR:", error.message);
 
-    console.error(
-      "APPROVE ERROR:",
-      err.response?.data || err.message
-    );
-
-    res.status(500).send({
-      success: false,
-      error:
-        err.response?.data ||
-        err.message
+    res.status(500).json({
+      error: error.message
     });
-
   }
-
 });
 
-/* ===============================
-   COMPLETE PAYMENT
-=============================== */
-
-app.post("/complete-payment", async (req, res) => {
-
+// COMPLETE PAYMENT
+app.post("/complete", async (req, res) => {
   try {
-
-    const { paymentId, txid } = req.body;
+    const paymentId = req.body.paymentId;
+    const txid = req.body.txid;
 
     console.log("COMPLETING PAYMENT:", paymentId);
 
-    const payment =
-      await pi.completePayment(paymentId, txid);
-
-    console.log("COMPLETE SUCCESS");
-
-    res.send({
+    res.json({
       success: true,
-      payment
+      paymentId,
+      txid
     });
 
-  } catch (err) {
+  } catch (error) {
+    console.log("COMPLETE ERROR:", error.message);
 
-    console.error(
-      "COMPLETE ERROR:",
-      err.response?.data || err.message
-    );
-
-    res.status(500).send({
-      success: false,
-      error:
-        err.response?.data ||
-        err.message
+    res.status(500).json({
+      error: error.message
     });
-
   }
-
 });
-
-/* ===============================
-   SERVER
-=============================== */
 
 const PORT = process.env.PORT || 8080;
 
 app.listen(PORT, () => {
-
-  console.log(
-    "ALBUKHR PAYMENT SERVER RUNNING ON PORT",
-    PORT
-  );
-
+  console.log(`ALBUKHR PAYMENT SERVER RUNNING ON PORT ${PORT}`);
 });
