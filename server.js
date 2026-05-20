@@ -8,7 +8,9 @@ app.use(cors());
 app.use(express.json());
 
 app.get("/", (req, res) => {
-  res.send("ALBUKHR PI PAYMENT API RUNNING");
+  res.status(200).json({
+    status: "OK"
+  });
 });
 
 // APPROVE PAYMENT
