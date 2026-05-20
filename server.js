@@ -16,17 +16,26 @@ app.post("/approve", async (req, res) => {
   try {
     const paymentId = req.body.paymentId;
 
-    console.log("APPROVING PAYMENT:", paymentId);
+    const response = await axios.post(
+      `https://api.minepi.com/v2/payments/${paymentId}/approve`,
+      {},
+      {
+        headers: {
+          Authorization: `Key YOUR_PI_API_KEY`
+        }
+      }
+    );
 
     res.json({
       success: true,
-      paymentId: paymentId
+      data: response.data
     });
 
   } catch (error) {
-    console.log("APPROVE ERROR:", error.message);
+    console.error("APPROVE ERROR:", error.response?.data || error.message);
 
     res.status(500).json({
+      success: false,
       error: error.message
     });
   }
@@ -35,21 +44,28 @@ app.post("/approve", async (req, res) => {
 // COMPLETE PAYMENT
 app.post("/complete", async (req, res) => {
   try {
-    const paymentId = req.body.paymentId;
-    const txid = req.body.txid;
+    const { paymentId, txid } = req.body;
 
-    console.log("COMPLETING PAYMENT:", paymentId);
+    const response = await axios.post(
+      `https://api.minepi.com/v2/payments/${paymentId}/complete`,
+      { txid },
+      {
+        headers: {
+          Authorization: `Key YOUR_PI_API_KEY`
+        }
+      }
+    );
 
     res.json({
       success: true,
-      paymentId,
-      txid
+      data: response.data
     });
 
   } catch (error) {
-    console.log("COMPLETE ERROR:", error.message);
+    console.error("COMPLETE ERROR:", error.response?.data || error.message);
 
     res.status(500).json({
+      success: false,
       error: error.message
     });
   }
