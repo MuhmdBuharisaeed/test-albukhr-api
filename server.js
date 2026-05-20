@@ -21,6 +21,8 @@ app.post("/approve", async (req, res) => {
 
     console.log("APPROVING PAYMENT:", paymentId);
 
+    console.log("API KEY:", process.env.PI_API_KEY);
+
     const response = await axios.post(
       `https://api.minepi.com/v2/payments/${paymentId}/approve`,
       {},
