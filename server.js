@@ -13,15 +13,21 @@ app.get("/", (req, res) => {
   });
 });
 
-// APPROVE PAYMENT
+/* ===================================
+   APPROVE PAYMENT
+=================================== */
 app.post("/approve", async (req, res) => {
+
   try {
 
     const paymentId = req.body.paymentId;
 
     console.log("APPROVING PAYMENT:", paymentId);
 
-    console.log("API KEY:", process.env.PI_API_KEY);
+    console.log(
+      "PI API KEY EXISTS:",
+      !!process.env.PI_API_KEY
+    );
 
     const response = await axios.post(
       `https://api.minepi.com/v2/payments/${paymentId}/approve`,
@@ -33,21 +39,36 @@ app.post("/approve", async (req, res) => {
       }
     );
 
-    res.json(response.data);
+    console.log("APPROVED SUCCESS");
+
+    res.json({
+      success: true,
+      data: response.data
+    });
 
   } catch (error) {
 
-    console.log("APPROVE ERROR:", error.response?.data || error.message);
+    console.log(
+      "APPROVE ERROR:",
+      error.response?.data || error.message
+    );
 
     res.status(500).json({
-      error: error.response?.data || error.message
+      success: false,
+      error:
+        error.response?.data ||
+        error.message
     });
 
   }
+
 });
 
-// COMPLETE PAYMENT
+/* ===================================
+   COMPLETE PAYMENT
+=================================== */
 app.post("/complete", async (req, res) => {
+
   try {
 
     const { paymentId, txid } = req.body;
@@ -64,21 +85,35 @@ app.post("/complete", async (req, res) => {
       }
     );
 
-    res.json(response.data);
+    console.log("COMPLETED SUCCESS");
+
+    res.json({
+      success: true,
+      data: response.data
+    });
 
   } catch (error) {
 
-    console.log("COMPLETE ERROR:", error.response?.data || error.message);
+    console.log(
+      "COMPLETE ERROR:",
+      error.response?.data || error.message
+    );
 
     res.status(500).json({
-      error: error.response?.data || error.message
+      success: false,
+      error:
+        error.response?.data ||
+        error.message
     });
 
   }
+
 });
 
 const PORT = process.env.PORT || 8080;
 
 app.listen(PORT, () => {
-  console.log(`ALBUKHR PAYMENT SERVER RUNNING ON PORT ${PORT}`);
+  console.log(
+    `ALBUKHR PAYMENT SERVER RUNNING ON PORT ${PORT}`
+  );
 });
