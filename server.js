@@ -2,10 +2,27 @@ const express = require("express");
 const cors = require("cors");
 const axios = require("axios");
 
+const { createClient } =
+require("@supabase/supabase-js");
+
+const StellarSdk =
+require("stellar-sdk");
+
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+const supabase =
+createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+const server =
+new StellarSdk.Horizon.Server(
+  "https://api.testnet.minepi.com"
+);
 
 app.get("/", (req, res) => {
   res.status(200).json({
@@ -104,6 +121,57 @@ app.post("/complete", async (req, res) => {
       error:
         error.response?.data ||
         error.message
+    });
+
+  }
+
+});
+
+/* ===================================
+   GET WITHDRAW REQUEST
+=================================== */
+app.post("/withdraw", async (req, res) => {
+
+  try {
+
+    const { requestId } = req.body;
+
+    if(!requestId){
+      return res.status(400).json({
+        error: "Missing requestId"
+      });
+    }
+
+    const { data, error } =
+      await supabase
+        .from("withdraw_requests")
+        .select("*")
+        .eq("id", requestId)
+        .single();
+
+    if(error || !data){
+      return res.status(404).json({
+        error: "Request not found"
+      });
+    }
+
+    if(data.status !== "approved"){
+      return res.status(400).json({
+        error: "Request not approved"
+      });
+    }
+
+    return res.json({
+      success: true,
+      request: data
+    });
+
+  } catch(err){
+
+    console.log(err);
+
+    return res.status(500).json({
+      error: err.message
     });
 
   }
