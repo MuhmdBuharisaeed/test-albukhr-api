@@ -209,6 +209,31 @@ app.get("/test-supabase", async (req,res)=>{
 
 });
 
+app.get("/test-stellar", async (req,res)=>{
+
+  try{
+
+    const account =
+      await server.loadAccount(
+        "GA6JI5N5HZIVG3VD5PM7W4U6DXPT73AZ5CHYURU2YJDPLPL77Q5KPCMD"
+      );
+
+    res.json({
+      success:true,
+      sequence:account.sequence
+    });
+
+  }catch(error){
+
+    res.status(500).json({
+      success:false,
+      error:error.message
+    });
+
+  }
+
+});
+
 const PORT = process.env.PORT || 8080;
 
 app.listen(PORT, () => {
