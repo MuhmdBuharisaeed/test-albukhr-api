@@ -178,6 +178,37 @@ app.post("/withdraw", async (req, res) => {
 
 });
 
+app.get("/test-supabase", async (req,res)=>{
+
+  try{
+
+    const { data, error } =
+      await supabase
+        .from("withdraw_requests")
+        .select("*")
+        .limit(1);
+
+    if(error){
+      return res.status(500).json({
+        error:error.message
+      });
+    }
+
+    res.json({
+      success:true,
+      rows:data
+    });
+
+  }catch(err){
+
+    res.status(500).json({
+      error:err.message
+    });
+
+  }
+
+});
+
 const PORT = process.env.PORT || 8080;
 
 app.listen(PORT, () => {
