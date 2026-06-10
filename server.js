@@ -259,6 +259,130 @@ app.get("/test-wallet", (req, res) => {
 
 });
 
+/* ===================================
+   PAY WITHDRAW
+=================================== */
+app.post("/pay-withdraw", async (req, res) => {
+
+  try {
+
+    const { requestId } = req.body;
+
+    if (!requestId) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing requestId"
+      });
+    }
+
+    /* Load Withdraw Request */
+    const { data, error } = await supabase
+      .from("withdraw_requests")
+      .select("*")
+      .eq("id", requestId)
+      .single();
+
+    if (error || !data) {
+      return res.status(404).json({
+        success: false,
+        error: "Request not found"
+      });
+    }
+
+    if (data.status !== "approved") {
+      return res.status(400).json({
+        success: false,
+        error: "Request must be approved first"
+      });
+    }
+
+    /* Load Admin Wallet */
+    const sourceKeypair =
+      StellarSdk.Keypair.fromSecret(
+        process.env.WALLET_PRIVATE_SEED
+      );
+
+    const sourceAccount =
+      await server.loadAccount(
+        sourceKeypair.publicKey()
+      );
+
+    /* Create Payment Transaction */
+    const transaction =
+      new StellarSdk.TransactionBuilder(
+        sourceAccount,
+        {
+          fee: StellarSdk.BASE_FEE,
+          networkPassphrase:
+            "Pi Testnet"
+        }
+      )
+      .addOperation(
+        StellarSdk.Operation.payment({
+          destination: data.wallet,
+          asset: StellarSdk.Asset.native(),
+          amount: Number(data.amount).toFixed(7)
+        })
+      )
+      .setTimeout(180)
+      .build();
+
+    /* Sign */
+    transaction.sign(sourceKeypair);
+
+    /* Submit */
+    const result =
+      await server.submitTransaction(
+        transaction
+      );
+
+    const txHash = result.hash;
+
+    /* Update Withdraw Request */
+    await supabase
+      .from("withdraw_requests")
+      .update({
+        status: "paid",
+        txid: txHash,
+        processed_at:
+          new Date().toISOString()
+      })
+      .eq("id", requestId);
+
+    /* Update Transactions Table */
+    await supabase
+      .from("transactions")
+      .update({
+        status: "paid",
+        txid: txHash,
+        processed_at:
+          new Date().toISOString()
+      })
+      .eq("userid", data.userid)
+      .eq("wallet", data.wallet)
+      .eq("status", "approved");
+
+    return res.json({
+      success: true,
+      txid: txHash
+    });
+
+  } catch (err) {
+
+    console.error(
+      "PAY WITHDRAW ERROR:",
+      err
+    );
+
+    return res.status(500).json({
+      success: false,
+      error: err.message
+    });
+
+  }
+
+});
+
 const PORT = process.env.PORT || 8080;
 
 app.listen(PORT, () => {
