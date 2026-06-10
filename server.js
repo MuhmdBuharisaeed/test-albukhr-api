@@ -234,6 +234,31 @@ app.get("/test-stellar", async (req,res)=>{
 
 });
 
+app.get("/test-wallet", (req, res) => {
+
+  try {
+
+    const kp =
+      StellarSdk.Keypair.fromSecret(
+        process.env.WALLET_PRIVATE_SEED
+      );
+
+    res.json({
+      success: true,
+      publicKey: kp.publicKey()
+    });
+
+  } catch(err){
+
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
+
+  }
+
+});
+
 const PORT = process.env.PORT || 8080;
 
 app.listen(PORT, () => {
