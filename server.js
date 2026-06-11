@@ -289,6 +289,9 @@ app.post("/pay-withdraw", async (req, res) => {
       });
     }
 
+    console.log("REQUEST ID:", requestId);
+console.log("REQUEST STATUS:", data?.status);
+
     if (data.status !== "approved") {
       return res.status(400).json({
         success: false,
