@@ -370,17 +370,33 @@ console.log("REQUEST STATUS:", data?.status);
       txid: txHash
     });
 
-  } catch (err) {
+  } catch(error){
 
-    console.error(
-      "PAY WITHDRAW ERROR:",
-      err
-    );
+  console.log(
+    "RESULT CODES:",
+    JSON.stringify(
+      error.response?.data?.extras?.result_codes,
+      null,
+      2
+    )
+  );
 
-    return res.status(500).json({
-      success: false,
-      error: err.message
-    });
+  console.log(
+    "FULL ERROR:",
+    JSON.stringify(
+      error.response?.data,
+      null,
+      2
+    )
+  );
+
+  return res.status(500).json({
+    success:false,
+    error:
+      JSON.stringify(
+        error.response?.data?.extras?.result_codes
+      )
+  });
 
   }
 
