@@ -311,15 +311,22 @@ console.log("REQUEST STATUS:", data?.status);
       );
 
     /* Create Payment Transaction */
-    const transaction =
-      new StellarSdk.TransactionBuilder(
-        sourceAccount,
-        {
-          fee: StellarSdk.BASE_FEE,
-          networkPassphrase:
-            "Pi Testnet"
-        }
-      )
+    const baseFee =
+  await server.fetchBaseFee();
+
+console.log(
+  "NETWORK BASE FEE:",
+  baseFee
+);
+
+const transaction =
+  new StellarSdk.TransactionBuilder(
+    sourceAccount,
+    {
+      fee: baseFee.toString(),
+      networkPassphrase: "Pi Testnet"
+    }
+  )
       .addOperation(
         StellarSdk.Operation.payment({
           destination: data.wallet,
