@@ -1,16 +1,16 @@
 {
   "name": "albukhr-test-api",
-  "version": "1.0.0",
+  "version": "1.1.0",
+  "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.50.0",
+    "axios": "^1.6.8",
     "cors": "^2.8.5",
     "express": "^4.18.2",
-    "axios": "^1.6.8",
-    "pi-backend": "latest",
-    "@supabase/supabase-js": "^2.50.0",
     "stellar-sdk": "^13.3.0"
   }
 }
