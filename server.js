@@ -14,6 +14,10 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const PI_API_KEY = process.env.PI_API_KEY;
 const WALLET_PRIVATE_SEED = process.env.WALLET_PRIVATE_SEED;
 const TESTNET_ADMIN_API_KEY = process.env.TESTNET_ADMIN_API_KEY;
+const TESTNET_WITHDRAWAL_RECONCILE_LIMIT = Math.min(
+  200,
+  Math.max(20, Number(process.env.TESTNET_WITHDRAWAL_RECONCILE_LIMIT || 100))
+);
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required.");
@@ -29,17 +33,16 @@ const server = new StellarSdk.Horizon.Server(
 
 app.disable("x-powered-by");
 
-app.use(
-  cors({
-    origin(origin, callback) {
-      if (!origin || origin === TESTNET_ORIGIN) return callback(null, true);
-      return callback(new Error("CORS_ORIGIN_NOT_ALLOWED"));
-    },
-    methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Authorization", "Content-Type", "X-Admin-Key"],
-    credentials: false
-  })
-);
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || origin === TESTNET_ORIGIN) return callback(null, true);
+    return callback(new Error("CORS_ORIGIN_NOT_ALLOWED"));
+  },
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Authorization", "Content-Type", "X-Admin-Key"],
+  credentials: false
+}));
+
 app.use(express.json({ limit: "100kb" }));
 
 function clean(value) {
@@ -56,13 +59,20 @@ function sha256Hex(value) {
 
 function bearer(req) {
   const value = clean(req.get("authorization"));
-  return /^Bearer\s+/i.test(value) ? value.replace(/^Bearer\s+/i, "").trim() : "";
+  return /^Bearer\s+/i.test(value)
+    ? value.replace(/^Bearer\s+/i, "").trim()
+    : "";
 }
 
 function requireAdmin(req, res, next) {
   const supplied = clean(req.get("x-admin-key"));
   if (!TESTNET_ADMIN_API_KEY || !supplied || supplied !== TESTNET_ADMIN_API_KEY) {
-    return jsonError(res, 401, "ADMIN_AUTH_REQUIRED", "Administrator authorization is required.");
+    return jsonError(
+      res,
+      401,
+      "ADMIN_AUTH_REQUIRED",
+      "Administrator authorization is required."
+    );
   }
   return next();
 }
@@ -95,7 +105,12 @@ async function getTestnetSession(req) {
 async function requireSession(req, res, next) {
   const result = await getTestnetSession(req);
   if (!result.session) {
-    return jsonError(res, 401, result.error || "UNAUTHENTICATED", "A valid Testnet session is required.");
+    return jsonError(
+      res,
+      401,
+      result.error || "UNAUTHENTICATED",
+      "A valid Testnet session is required."
+    );
   }
   req.testnetSession = result.session;
   next();
@@ -114,9 +129,183 @@ function piApiError(error) {
   return error?.response?.data || error?.message || "Pi API request failed.";
 }
 
+function numeric(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 /*
- * Testnet-only health endpoint.
+ * A withdrawal ID maps to one deterministic 28-byte Stellar text memo.
+ * This lets reconciliation detect a payout that reached the Pi Testnet
+ * even when the database update was interrupted afterwards.
  */
+function withdrawalMemo(requestId) {
+  return "ALB-" + sha256Hex(requestId).slice(0, 24);
+}
+
+function payoutWalletKeypair() {
+  if (!WALLET_PRIVATE_SEED) throw new Error("WALLET_NOT_CONFIGURED");
+  return StellarSdk.Keypair.fromSecret(WALLET_PRIVATE_SEED);
+}
+
+async function getWithdrawal(requestId) {
+  const { data, error } = await supabase
+    .from("withdrawal_requests")
+    .select("*")
+    .eq("id", requestId)
+    .eq("network", "testnet")
+    .maybeSingle();
+
+  if (error) throw new Error(`WITHDRAW_READ_FAILED:${error.message}`);
+  return data || null;
+}
+
+async function findTestnetPayoutByMemo(sourcePublicKey, memoText) {
+  const page = await server
+    .transactions()
+    .forAccount(sourcePublicKey)
+    .order("desc")
+    .limit(TESTNET_WITHDRAWAL_RECONCILE_LIMIT)
+    .call();
+
+  for (const tx of page.records || []) {
+    if (clean(tx.memo) !== memoText) continue;
+    if (tx.memo_type !== "text") continue;
+    return tx;
+  }
+
+  return null;
+}
+
+async function markWithdrawalCompleted(requestId, txid) {
+  const processedAt = new Date().toISOString();
+
+  const update = await supabase
+    .from("withdrawal_requests")
+    .update({
+      status: "completed",
+      txid,
+      reviewed_at: processedAt
+    })
+    .eq("id", requestId)
+    .eq("network", "testnet")
+    .in("status", ["processing", "approved"])
+    .select("id,status,txid,requested_amount,fee_amount,net_amount,wallet_address")
+    .maybeSingle();
+
+  if (update.error) {
+    throw new Error(`PAYOUT_RECORDED_FAILED:${update.error.message}`);
+  }
+
+  return update.data;
+}
+
+async function submitTestnetWithdrawalPayout(requestRow) {
+  if (!requestRow) throw new Error("REQUEST_NOT_FOUND");
+  if (!clean(requestRow.wallet_address)) throw new Error("MISSING_WALLET");
+
+  const amount = numeric(
+    requestRow.net_amount ?? requestRow.requested_amount
+  );
+  if (amount === null || amount <= 0) throw new Error("INVALID_AMOUNT");
+
+  const sourceKeypair = payoutWalletKeypair();
+  const sourcePublicKey = sourceKeypair.publicKey();
+  const memoText = withdrawalMemo(requestRow.id);
+
+  const existing = await findTestnetPayoutByMemo(
+    sourcePublicKey,
+    memoText
+  );
+
+  if (existing) {
+    return {
+      txid: existing.hash,
+      reconciled: true,
+      memo: memoText
+    };
+  }
+
+  const sourceAccount = await server.loadAccount(sourcePublicKey);
+  const baseFee = await server.fetchBaseFee();
+
+  const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
+    fee: baseFee.toString(),
+    networkPassphrase: "Pi Testnet"
+  })
+    .addOperation(
+      StellarSdk.Operation.payment({
+        destination: requestRow.wallet_address,
+        asset: StellarSdk.Asset.native(),
+        amount: amount.toFixed(7)
+      })
+    )
+    .addMemo(StellarSdk.Memo.text(memoText))
+    .setTimeout(180)
+    .build();
+
+  transaction.sign(sourceKeypair);
+
+  const result = await server.submitTransaction(transaction);
+
+  return {
+    txid: result.hash,
+    reconciled: false,
+    memo: memoText
+  };
+}
+
+async function createAndClaimWithdrawal({
+  piUid,
+  stakeId,
+  withdrawalType,
+  requestedAmount,
+  walletAddress
+}) {
+  const create = await supabase.rpc("create_testnet_withdrawal", {
+    p_pi_uid: piUid,
+    p_stake_id: stakeId,
+    p_withdrawal_type: withdrawalType,
+    p_requested_amount: requestedAmount,
+    p_wallet_address: walletAddress
+  });
+
+  if (create.error) {
+    console.error("[WITHDRAW CREATE]", create.error.message);
+    throw new Error(`WITHDRAW_CREATE_FAILED:${create.error.message}`);
+  }
+
+  const created = Array.isArray(create.data) ? create.data[0] : create.data;
+
+  if (!created?.id) {
+    throw new Error(
+      "WITHDRAW_CREATE_FAILED:No withdrawal request was returned."
+    );
+  }
+
+  const claim = await supabase.rpc("claim_testnet_withdrawal", {
+    p_request_id: created.id,
+    p_pi_uid: piUid
+  });
+
+  if (claim.error) {
+    console.error("[WITHDRAW CLAIM]", claim.error.message);
+    return {
+      request: created,
+      claimed: false,
+      claimError: claim.error.message
+    };
+  }
+
+  const claimed = Array.isArray(claim.data) ? claim.data[0] : claim.data;
+
+  return {
+    request: claimed || created,
+    claimed: true
+  };
+}
+
+/* Testnet-only health. */
 app.get("/", (req, res) => {
   res.status(200).json({
     status: "OK",
@@ -125,11 +314,7 @@ app.get("/", (req, res) => {
   });
 });
 
-/*
- * Investor data.
- * Browser sends only the opaque Testnet session token.
- * Service role key never leaves this server.
- */
+/* Protected Testnet investor data. */
 app.get("/investor-data", requireSession, async (req, res) => {
   try {
     const uid = req.testnetSession.pi_uid;
@@ -156,19 +341,37 @@ app.get("/investor-data", requireSession, async (req, res) => {
 
     if (stakesQ.error) {
       console.error("[INVESTOR] stakes:", stakesQ.error.message);
-      return jsonError(res, 500, "STAKES_READ_FAILED", "Unable to load Testnet stakes.");
+      return jsonError(
+        res,
+        500,
+        "STAKES_READ_FAILED",
+        "Unable to load Testnet stakes."
+      );
     }
+
     if (withdrawalsQ.error) {
       console.error("[INVESTOR] withdrawals:", withdrawalsQ.error.message);
-      return jsonError(res, 500, "WITHDRAWALS_READ_FAILED", "Unable to load Testnet withdrawals.");
+      return jsonError(
+        res,
+        500,
+        "WITHDRAWALS_READ_FAILED",
+        "Unable to load Testnet withdrawals."
+      );
     }
 
     const stakes = stakesQ.data || [];
     const withdrawals = withdrawalsQ.data || [];
 
-    const invested = stakes.reduce((sum, row) => sum + Number(row.amount || 0), 0);
-    const earnings = stakes.reduce((sum, row) => sum + Number(row.reward_amount || 0), 0);
+    const invested = stakes.reduce(
+      (sum, row) => sum + Number(row.amount || 0),
+      0
+    );
+    const earnings = stakes.reduce(
+      (sum, row) => sum + Number(row.reward_amount || 0),
+      0
+    );
     const active = stakes.filter((row) => row.status === "active");
+
     const projectCodes = [
       ...new Set(
         stakes.map((row) => clean(row.project_code)).filter(Boolean)
@@ -176,6 +379,7 @@ app.get("/investor-data", requireSession, async (req, res) => {
     ];
 
     let projects = [];
+
     if (projectCodes.length) {
       const projectsQ = await supabase
         .from("projects")
@@ -187,8 +391,14 @@ app.get("/investor-data", requireSession, async (req, res) => {
 
       if (projectsQ.error) {
         console.error("[INVESTOR] projects:", projectsQ.error.message);
-        return jsonError(res, 500, "PROJECT_READ_FAILED", "Unable to load Testnet project metadata.");
+        return jsonError(
+          res,
+          500,
+          "PROJECT_READ_FAILED",
+          "Unable to load Testnet project metadata."
+        );
       }
+
       projects = projectsQ.data || [];
     }
 
@@ -216,19 +426,30 @@ app.get("/investor-data", requireSession, async (req, res) => {
     });
   } catch (error) {
     console.error("[INVESTOR]", error);
-    return jsonError(res, 500, "INVESTOR_DATA_ERROR", "Unable to load Testnet investor data.");
+    return jsonError(
+      res,
+      500,
+      "INVESTOR_DATA_ERROR",
+      "Unable to load Testnet investor data."
+    );
   }
 });
 
 /*
- * Pi payment approval.
- * Protected by an admin key because the Pi API key is server-side.
+ * Pi payment approval/completion remain admin-only because the Pi API key
+ * remains server-side.
  */
 app.post("/approve", requireAdmin, async (req, res) => {
   try {
     const paymentId = clean(req.body?.paymentId);
+
     if (!paymentId) {
-      return jsonError(res, 400, "MISSING_PAYMENT_ID", "paymentId is required.");
+      return jsonError(
+        res,
+        400,
+        "MISSING_PAYMENT_ID",
+        "paymentId is required."
+      );
     }
 
     const response = await axios.post(
@@ -240,20 +461,27 @@ app.post("/approve", requireAdmin, async (req, res) => {
     return res.json({ success: true, data: response.data });
   } catch (error) {
     console.error("[PI APPROVE]", piApiError(error));
-    return jsonError(res, 502, "PI_APPROVE_FAILED", "Pi payment approval failed.");
+    return jsonError(
+      res,
+      502,
+      "PI_APPROVE_FAILED",
+      "Pi payment approval failed."
+    );
   }
 });
 
-/*
- * Pi payment completion.
- */
 app.post("/complete", requireAdmin, async (req, res) => {
   try {
     const paymentId = clean(req.body?.paymentId);
     const txid = clean(req.body?.txid);
 
     if (!paymentId || !txid) {
-      return jsonError(res, 400, "MISSING_PAYMENT_FIELDS", "paymentId and txid are required.");
+      return jsonError(
+        res,
+        400,
+        "MISSING_PAYMENT_FIELDS",
+        "paymentId and txid are required."
+      );
     }
 
     const response = await axios.post(
@@ -265,152 +493,382 @@ app.post("/complete", requireAdmin, async (req, res) => {
     return res.json({ success: true, data: response.data });
   } catch (error) {
     console.error("[PI COMPLETE]", piApiError(error));
-    return jsonError(res, 502, "PI_COMPLETE_FAILED", "Pi payment completion failed.");
+    return jsonError(
+      res,
+      502,
+      "PI_COMPLETE_FAILED",
+      "Pi payment completion failed."
+    );
   }
 });
 
 /*
- * Fetch an approved withdrawal request.
- * This endpoint is for server/admin workflows, not the investor UI.
+ * USER TESTNET WITHDRAWAL
+ *
+ * The database RPC is authoritative for:
+ * - minimum 0.50 Pi
+ * - 1% fee with 0.01 Pi minimum
+ * - reward/capital availability
+ * - unlock_at
+ * - available balance and duplicate withdrawal accounting
  */
-app.post("/withdraw", requireAdmin, async (req, res) => {
+app.post("/withdraw", requireSession, async (req, res) => {
   try {
-    const requestId = clean(req.body?.requestId);
-    if (!requestId) {
-      return jsonError(res, 400, "MISSING_REQUEST_ID", "requestId is required.");
+    const piUid = clean(req.testnetSession.pi_uid);
+    const stakeId = clean(req.body?.stakeId);
+    const withdrawalType = clean(req.body?.withdrawalType).toLowerCase();
+    const walletAddress = clean(
+      req.body?.walletAddress || req.testnetSession.wallet_address
+    );
+    const requestedAmount = numeric(req.body?.requestedAmount);
+
+    if (
+      !stakeId ||
+      !["reward", "capital"].includes(withdrawalType)
+    ) {
+      return jsonError(
+        res,
+        400,
+        "INVALID_WITHDRAWAL_REQUEST",
+        "stakeId and withdrawalType (reward or capital) are required."
+      );
     }
 
-    const { data, error } = await supabase
-      .from("withdrawal_requests")
-      .select("*")
-      .eq("id", requestId)
-      .eq("network", "testnet")
-      .maybeSingle();
-
-    if (error) {
-      console.error("[WITHDRAW LOOKUP]", error.message);
-      return jsonError(res, 500, "WITHDRAW_READ_FAILED", "Unable to read the withdrawal request.");
-    }
-    if (!data) {
-      return jsonError(res, 404, "REQUEST_NOT_FOUND", "Withdrawal request not found.");
-    }
-    if (data.status !== "approved") {
-      return jsonError(res, 400, "REQUEST_NOT_APPROVED", "Withdrawal request is not approved.");
+    if (requestedAmount === null || requestedAmount < 0.5) {
+      return jsonError(
+        res,
+        400,
+        "MINIMUM_WITHDRAWAL",
+        "Minimum Testnet wallet receive amount is 0.50 Pi."
+      );
     }
 
-    return res.json({ success: true, request: data });
-  } catch (error) {
-    console.error("[WITHDRAW LOOKUP]", error);
-    return jsonError(res, 500, "WITHDRAW_LOOKUP_FAILED", "Unable to load the withdrawal request.");
-  }
-});
-
-/*
- * Testnet withdrawal payout.
- * This is deliberately admin-only and uses the Testnet network.
- * No browser-facing session can invoke it.
- */
-app.post("/pay-withdraw", requireAdmin, async (req, res) => {
-  try {
-    if (!WALLET_PRIVATE_SEED) {
-      return jsonError(res, 500, "WALLET_NOT_CONFIGURED", "Testnet payout wallet is not configured.");
+    if (!walletAddress) {
+      return jsonError(
+        res,
+        400,
+        "MISSING_WALLET",
+        "A Testnet wallet address is required."
+      );
     }
 
-    const requestId = clean(req.body?.requestId);
-    if (!requestId) {
-      return jsonError(res, 400, "MISSING_REQUEST_ID", "requestId is required.");
+    const created = await createAndClaimWithdrawal({
+      piUid,
+      stakeId,
+      withdrawalType,
+      requestedAmount,
+      walletAddress
+    });
+
+    if (!created.claimed) {
+      return jsonError(
+        res,
+        409,
+        "WITHDRAWAL_CLAIM_FAILED",
+        "The withdrawal request was created but could not be claimed for payout. Reconciliation is required before retrying."
+      );
     }
 
-    const { data, error } = await supabase
-      .from("withdrawal_requests")
-      .select(
-        "id,pi_uid,project_id,project_code,network,requested_amount,fee_amount,net_amount,wallet_address,status,txid"
-      )
-      .eq("id", requestId)
-      .eq("network", "testnet")
-      .maybeSingle();
+    const payout = await submitTestnetWithdrawalPayout(created.request);
 
-    if (error) {
-      console.error("[PAY WITHDRAW] read:", error.message);
-      return jsonError(res, 500, "WITHDRAW_READ_FAILED", "Unable to read the withdrawal request.");
-    }
-    if (!data) {
-      return jsonError(res, 404, "REQUEST_NOT_FOUND", "Withdrawal request not found.");
-    }
-    if (data.status !== "approved") {
-      return jsonError(res, 400, "REQUEST_NOT_APPROVED", "Withdrawal request must be approved first.");
-    }
-    if (!clean(data.wallet_address)) {
-      return jsonError(res, 400, "MISSING_WALLET", "Withdrawal wallet address is missing.");
-    }
+    let completed;
 
-    const amount = Number(data.net_amount ?? data.requested_amount);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      return jsonError(res, 400, "INVALID_AMOUNT", "Withdrawal amount is invalid.");
-    }
-
-    const sourceKeypair = StellarSdk.Keypair.fromSecret(WALLET_PRIVATE_SEED);
-    const sourceAccount = await server.loadAccount(sourceKeypair.publicKey());
-    const baseFee = await server.fetchBaseFee();
-
-    const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
-      fee: baseFee.toString(),
-      networkPassphrase: "Pi Testnet"
-    })
-      .addOperation(
-        StellarSdk.Operation.payment({
-          destination: data.wallet_address,
-          asset: StellarSdk.Asset.native(),
-          amount: amount.toFixed(7)
-        })
-      )
-      .setTimeout(180)
-      .build();
-
-    transaction.sign(sourceKeypair);
-
-    const result = await server.submitTransaction(transaction);
-    const txHash = result.hash;
-    const processedAt = new Date().toISOString();
-
-    const update = await supabase
-      .from("withdrawal_requests")
-      .update({
-        status: "completed",
-        txid: txHash,
-        reviewed_at: processedAt
-      })
-      .eq("id", requestId)
-      .eq("network", "testnet")
-      .eq("status", "approved")
-      .select("id,status,txid")
-      .maybeSingle();
-
-    if (update.error) {
-      console.error("[PAY WITHDRAW] DB update:", update.error.message);
+    try {
+      completed = await markWithdrawalCompleted(
+        created.request.id,
+        payout.txid
+      );
+    } catch (recordError) {
+      console.error("[WITHDRAW] payout succeeded but DB update failed:", recordError);
       return res.status(502).json({
         success: false,
         error: "PAYOUT_RECORDED_FAILED",
-        txid: txHash
+        message:
+          "The Testnet payout was submitted, but its database status could not be recorded. Reconciliation is required.",
+        network: "testnet",
+        txid: payout.txid,
+        request_id: created.request.id
       });
     }
 
     return res.json({
       success: true,
       network: "testnet",
-      txid: txHash,
-      request: update.data
+      payout: "completed",
+      reconciled: !!payout.reconciled,
+      txid: payout.txid,
+      request: completed || created.request
     });
   } catch (error) {
-    console.error("[PAY WITHDRAW]", error?.response?.data || error);
-    return jsonError(res, 502, "TESTNET_PAYOUT_FAILED", "Testnet withdrawal payout failed.");
+    const message = clean(error?.message);
+
+    console.error("[WITHDRAW]", error?.stack || error);
+
+    if (message.startsWith("WITHDRAW_CREATE_FAILED:")) {
+      return jsonError(
+        res,
+        400,
+        "WITHDRAWAL_REJECTED",
+        message.slice("WITHDRAW_CREATE_FAILED:".length)
+      );
+    }
+
+    if (message === "WALLET_NOT_CONFIGURED") {
+      return jsonError(
+        res,
+        503,
+        "WALLET_NOT_CONFIGURED",
+        "Testnet payout wallet is not configured."
+      );
+    }
+
+    if (message === "MISSING_WALLET") {
+      return jsonError(
+        res,
+        400,
+        "MISSING_WALLET",
+        "A Testnet wallet address is required."
+      );
+    }
+
+    if (message === "INVALID_AMOUNT") {
+      return jsonError(
+        res,
+        400,
+        "INVALID_AMOUNT",
+        "Withdrawal amount is invalid."
+      );
+    }
+
+    return jsonError(
+      res,
+      502,
+      "TESTNET_WITHDRAWAL_FAILED",
+      "Testnet withdrawal payout failed. The request may remain in processing and can be reconciled safely."
+    );
+  }
+});
+
+/* Admin lookup. */
+app.post("/withdraw/lookup", requireAdmin, async (req, res) => {
+  try {
+    const requestId = clean(req.body?.requestId);
+
+    if (!requestId) {
+      return jsonError(
+        res,
+        400,
+        "MISSING_REQUEST_ID",
+        "requestId is required."
+      );
+    }
+
+    const data = await getWithdrawal(requestId);
+
+    if (!data) {
+      return jsonError(
+        res,
+        404,
+        "REQUEST_NOT_FOUND",
+        "Withdrawal request not found."
+      );
+    }
+
+    return res.json({
+      success: true,
+      network: "testnet",
+      request: data
+    });
+  } catch (error) {
+    console.error("[WITHDRAW LOOKUP]", error);
+    return jsonError(
+      res,
+      500,
+      "WITHDRAW_LOOKUP_FAILED",
+      "Unable to load the withdrawal request."
+    );
   }
 });
 
 /*
- * Operational diagnostics are admin-only.
- * Private wallet seed is never returned.
+ * Admin/manual payout endpoint.
+ * Supports approved or processing rows and always checks the deterministic
+ * memo before creating a new payment.
  */
+app.post("/pay-withdraw", requireAdmin, async (req, res) => {
+  try {
+    const requestId = clean(req.body?.requestId);
+
+    if (!requestId) {
+      return jsonError(
+        res,
+        400,
+        "MISSING_REQUEST_ID",
+        "requestId is required."
+      );
+    }
+
+    const requestRow = await getWithdrawal(requestId);
+
+    if (!requestRow) {
+      return jsonError(
+        res,
+        404,
+        "REQUEST_NOT_FOUND",
+        "Withdrawal request not found."
+      );
+    }
+
+    if (requestRow.status === "completed") {
+      return res.json({
+        success: true,
+        network: "testnet",
+        payout: "already_completed",
+        txid: requestRow.txid,
+        request: requestRow
+      });
+    }
+
+    if (!["approved", "processing"].includes(requestRow.status)) {
+      return jsonError(
+        res,
+        400,
+        "REQUEST_NOT_PAYABLE",
+        "Withdrawal request must be approved or processing."
+      );
+    }
+
+    const payout = await submitTestnetWithdrawalPayout(requestRow);
+
+    try {
+      const completed = await markWithdrawalCompleted(
+        requestId,
+        payout.txid
+      );
+
+      return res.json({
+        success: true,
+        network: "testnet",
+        payout: "completed",
+        reconciled: !!payout.reconciled,
+        txid: payout.txid,
+        request: completed || requestRow
+      });
+    } catch (recordError) {
+      console.error("[PAY WITHDRAW] DB update:", recordError);
+      return res.status(502).json({
+        success: false,
+        error: "PAYOUT_RECORDED_FAILED",
+        txid: payout.txid,
+        request_id: requestId
+      });
+    }
+  } catch (error) {
+    console.error("[PAY WITHDRAW]", error?.stack || error);
+
+    return jsonError(
+      res,
+      502,
+      "TESTNET_PAYOUT_FAILED",
+      "Testnet withdrawal payout failed or could not be reconciled safely."
+    );
+  }
+});
+
+/*
+ * Admin reconciliation:
+ * if the payout reached Pi Testnet but the DB stayed in processing/approved,
+ * the memo identifies the already-submitted transaction.
+ */
+app.post("/reconcile-withdraw", requireAdmin, async (req, res) => {
+  try {
+    const requestId = clean(req.body?.requestId);
+
+    if (!requestId) {
+      return jsonError(
+        res,
+        400,
+        "MISSING_REQUEST_ID",
+        "requestId is required."
+      );
+    }
+
+    const requestRow = await getWithdrawal(requestId);
+
+    if (!requestRow) {
+      return jsonError(
+        res,
+        404,
+        "REQUEST_NOT_FOUND",
+        "Withdrawal request not found."
+      );
+    }
+
+    if (requestRow.status === "completed") {
+      return res.json({
+        success: true,
+        network: "testnet",
+        reconciled: true,
+        payoutFound: true,
+        txid: requestRow.txid,
+        request: requestRow
+      });
+    }
+
+    if (!["processing", "approved"].includes(requestRow.status)) {
+      return jsonError(
+        res,
+        400,
+        "REQUEST_NOT_RECONCILABLE",
+        "Withdrawal request is not processing or approved."
+      );
+    }
+
+    const sourceKeypair = payoutWalletKeypair();
+    const memoText = withdrawalMemo(requestId);
+
+    const existing = await findTestnetPayoutByMemo(
+      sourceKeypair.publicKey(),
+      memoText
+    );
+
+    if (!existing) {
+      return res.json({
+        success: true,
+        network: "testnet",
+        reconciled: false,
+        payoutFound: false,
+        memo: memoText,
+        request: requestRow
+      });
+    }
+
+    const completed = await markWithdrawalCompleted(
+      requestId,
+      existing.hash
+    );
+
+    return res.json({
+      success: true,
+      network: "testnet",
+      reconciled: true,
+      payoutFound: true,
+      txid: existing.hash,
+      request: completed || requestRow
+    });
+  } catch (error) {
+    console.error("[RECONCILE WITHDRAW]", error?.stack || error);
+
+    return jsonError(
+      res,
+      502,
+      "WITHDRAW_RECONCILIATION_FAILED",
+      "Unable to reconcile the Testnet withdrawal safely."
+    );
+  }
+});
+
+/* Operational diagnostics remain admin-only. */
 app.get("/test-supabase", requireAdmin, async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -423,7 +881,11 @@ app.get("/test-supabase", requireAdmin, async (req, res) => {
       return jsonError(res, 500, "SUPABASE_TEST_FAILED", error.message);
     }
 
-    return res.json({ success: true, network: "testnet", rows: data || [] });
+    return res.json({
+      success: true,
+      network: "testnet",
+      rows: data || []
+    });
   } catch (error) {
     return jsonError(res, 500, "SUPABASE_TEST_FAILED", error.message);
   }
@@ -432,11 +894,18 @@ app.get("/test-supabase", requireAdmin, async (req, res) => {
 app.get("/test-stellar", requireAdmin, async (req, res) => {
   try {
     const publicKey = clean(process.env.TESTNET_WALLET_PUBLIC_KEY);
+
     if (!publicKey) {
-      return jsonError(res, 500, "WALLET_PUBLIC_KEY_NOT_CONFIGURED", "TESTNET_WALLET_PUBLIC_KEY is required.");
+      return jsonError(
+        res,
+        500,
+        "WALLET_PUBLIC_KEY_NOT_CONFIGURED",
+        "TESTNET_WALLET_PUBLIC_KEY is required."
+      );
     }
 
     const account = await server.loadAccount(publicKey);
+
     return res.json({
       success: true,
       network: "testnet",
@@ -450,31 +919,48 @@ app.get("/test-stellar", requireAdmin, async (req, res) => {
 
 app.get("/test-wallet", requireAdmin, (req, res) => {
   try {
-    if (!WALLET_PRIVATE_SEED) {
-      return jsonError(res, 500, "WALLET_NOT_CONFIGURED", "Testnet payout wallet is not configured.");
-    }
+    const keypair = payoutWalletKeypair();
 
-    const keypair = StellarSdk.Keypair.fromSecret(WALLET_PRIVATE_SEED);
     return res.json({
       success: true,
       network: "testnet",
       publicKey: keypair.publicKey()
     });
   } catch (error) {
-    return jsonError(res, 500, "WALLET_TEST_FAILED", error.message);
+    return jsonError(
+      res,
+      500,
+      "WALLET_TEST_FAILED",
+      "Testnet payout wallet is not configured or is invalid."
+    );
   }
 });
 
 app.use((req, res) => {
-  res.status(404).json({ success: false, error: "NOT_FOUND" });
+  res.status(404).json({
+    success: false,
+    error: "NOT_FOUND"
+  });
 });
 
 app.use((error, req, res, next) => {
   console.error("[API]", error);
+
   if (error?.message === "CORS_ORIGIN_NOT_ALLOWED") {
-    return jsonError(res, 403, "CORS_ORIGIN_NOT_ALLOWED", "Origin is not allowed.");
+    return jsonError(
+      res,
+      403,
+      "CORS_ORIGIN_NOT_ALLOWED",
+      "Origin is not allowed."
+    );
   }
-  return jsonError(res, 500, "INTERNAL_SERVER_ERROR", "Internal server error.");
+
+  return jsonError(
+    res,
+    500,
+    "INTERNAL_SERVER_ERROR",
+    "Internal server error."
+  );
 });
 
 app.listen(PORT, () => {
