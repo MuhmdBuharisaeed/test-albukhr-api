@@ -458,3 +458,143 @@ function createTestnetLiquidityPaymentRouter({
 }
 
 module.exports = createTestnetLiquidityPaymentRouter;
+
+diff --git a/server.js b/server.js
+index e3c72f0..PENDING 100644
+--- a/server.js
++++ b/server.js
+@@ -4,6 +4,7 @@ const axios = require("axios");
+ const crypto = require("crypto");
+ const { createClient } = require("@supabase/supabase-js");
+ const StellarSdk = require("stellar-sdk");
++const createTestnetLiquidityPaymentRouter = require("./testnet-liquidity-payment-router");
+
+ const app = express();
+@@ -47,6 +48,14 @@ app.use(cors({
+
+ app.use(express.json({ limit: "100kb" }));
+
++/*
++ * Testnet User-to-App liquidity funding.
++ * Kept under a dedicated namespace so the existing admin-only /approve and
++ * /complete withdrawal/payment endpoints are not replaced or collided with.
++ */
++app.use(
++  "/liquidity-payment",
++  createTestnetLiquidityPaymentRouter({
++    supabase,
++    axios,
++    piApiKey: PI_API_KEY
++  })
++);
++
+ function clean(value) {
+   return String(value == null ? "" : value).trim();
+ }
+diff --git a/testnet-liquidity-payment-router.js b/testnet-liquidity-payment-router.js
+index 2131a44..PENDING 100644
+--- a/testnet-liquidity-payment-router.js
++++ b/testnet-liquidity-payment-router.js
+@@ -24,8 +24,8 @@ function createTestnetLiquidityPaymentRouter({
+
+   function bearer(req) {
+     const value = clean(req.get("authorization"));
+-    return /^Bearer\\s+/i.test(value)
+-      ? value.replace(/^Bearer\\s+/i, "").trim()
++    return /^Bearer\s+/i.test(value)
++      ? value.replace(/^Bearer\s+/i, "").trim()
+       : "";
+   }
+@@ -185,6 +185,11 @@ function validatePaymentIdentity(payment, piUser) {
+       }
+     }
+   }
+
+-  async function validateFunding(payment, projectId) {
++  function validatePaymentDestination(payment, treasury) {
++    const destination = clean(payment?.to_address);
++    if (destination && destination !== clean(treasury?.treasury_wallet)) {
++      throw new Error("PI_PAYMENT_RECIPIENT_MISMATCH");
++    }
++  }
++
++  async function validateFunding(payment, projectId, { enforceRemaining = true } = {}) {
+     const project = await getApprovedProject(projectId);
+     const treasury = await getTreasury(project.id);
+     const verified = await verifiedLiquidity(project.id);
+@@ -193,8 +198,10 @@ function validateFunding(payment, projectId) {
+     const due = Math.max(0, required - verified);
+     const amount = amountFromPayment(payment);
+
+-    if (due <= 0) throw new Error("PROJECT_LIQUIDITY_ALREADY_READY");
+-    if (amount < due) throw new Error("LIQUIDITY_AMOUNT_BELOW_REMAINING_REQUIREMENT");
++    if (enforceRemaining) {
++      if (due <= 0) throw new Error("PROJECT_LIQUIDITY_ALREADY_READY");
++      if (amount < due) throw new Error("LIQUIDITY_AMOUNT_BELOW_REMAINING_REQUIREMENT");
++    }
+
+     return { project, treasury, verified, required, due };
+   }
+@@ -215,6 +222,7 @@ function sendError(res, error) {
+       PI_PAYMENT_DIRECTION_INVALID: 400,
+       PI_PAYMENT_METADATA_NETWORK_INVALID: 400,
+       PI_PAYMENT_METADATA_ACTION_INVALID: 400,
++      PI_PAYMENT_RECIPIENT_MISMATCH: 400,
+       PI_PAYMENT_TRANSACTION_NOT_VERIFIED: 409,
+     };
+@@ -229,19 +237,31 @@ router.post("/approve", async (req, res) => {
+
+       const payment = await getPayment(paymentId);
+       validatePaymentIdentity(payment, piUser);
+       const funding = await validateFunding(payment, projectId);
++      validatePaymentDestination(payment, funding.treasury);
+
+       if (clean(payment.metadata?.project_id) && clean(payment.metadata.project_id) !== funding.project.id) {
+         throw new Error("PI_PAYMENT_PROJECT_MISMATCH");
+       }
+       if (clean(payment.metadata?.project_code) && clean(payment.metadata.project_code) !== funding.project.project_code) {
+         throw new Error("PI_PAYMENT_PROJECT_MISMATCH");
+       }
++      if (payment.status?.cancelled || payment.status?.user_cancelled) {
++        throw new Error("PI_PAYMENT_CANCELLED");
++      }
+
+-      const approved = await approvePayment(paymentId);
++      const approved = payment.status?.developer_approved
++        ? payment
++        : await approvePayment(paymentId);
+       const record = await upsertPaymentRecord({
+         payment,
+         project: funding.project,
+@@ -272,20 +292,31 @@ router.post("/complete", async (req, res) => {
+
+       const payment = await getPayment(paymentId);
+       validatePaymentIdentity(payment, piUser);
+-      const funding = await validateFunding(payment, projectId);
++      const funding = await validateFunding(payment, projectId, {
++        enforceRemaining: false
++      });
++      validatePaymentDestination(payment, funding.treasury);
+
+       if (clean(payment.metadata?.project_id) && clean(payment.metadata.project_id) !== funding.project.id) {
+         throw new Error("PI_PAYMENT_PROJECT_MISMATCH");
+       }
+
+-      const completed = await completePayment(paymentId, txid);
++      const completed = payment.status?.developer_completed
++        ? payment
++        : await completePayment(paymentId, txid);
+       const record = await upsertPaymentRecord({
+         payment,
+         project: funding.project,
+@@ -313,7 +344,7 @@ router.post("/incomplete", async (req, res) => {
+       const projectId = clean(payment.metadata?.project_id);
+       if (!projectId) throw new Error("PI_PAYMENT_PROJECT_REQUIRED");
+-      const funding = await validateFunding(payment, projectId);
++      const funding = await validateFunding(payment, projectId, {
++        enforceRemaining: false
++      });
++      validatePaymentDestination(payment, funding.treasury);
+
+       if (!txid) {
+         return res.json({
