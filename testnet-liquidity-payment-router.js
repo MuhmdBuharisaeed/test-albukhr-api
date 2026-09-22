@@ -598,3 +598,176 @@ index 2131a44..PENDING 100644
 
        if (!txid) {
          return res.json({
+
+  diff --git a/server.js b/server.js
+--- a/server.js
++++ b/server.js
+@@
+ const crypto = require("crypto");
+ const { createClient } = require("@supabase/supabase-js");
+ const StellarSdk = require("stellar-sdk");
++const createTestnetLiquidityPaymentRouter = require("./testnet-liquidity-payment-router");
+@@
+ app.use(express.json({ limit: "100kb" }));
++
++/*
++ * Dedicated Testnet User-to-App liquidity payment routes.
++ * These do not replace the existing admin-only /approve and /complete
++ * endpoints already used elsewhere by the Testnet API.
++ */
++app.use(
++  "/liquidity-payment",
++  createTestnetLiquidityPaymentRouter({
++    supabase,
++    axios,
++    piApiKey: PI_API_KEY
++  })
++);
+
+ function clean(value) {
+   return String(value == null ? "" : value).trim();
+ }
+diff --git a/testnet-liquidity-payment-router.js b/testnet-liquidity-payment-router.js
+--- a/testnet-liquidity-payment-router.js
++++ b/testnet-liquidity-payment-router.js
+@@
+   function bearer(req) {
+     const value = clean(req.get("authorization"));
+-    return /^Bearer\\s+/i.test(value)
+-      ? value.replace(/^Bearer\\s+/i, "").trim()
++    return /^Bearer\s+/i.test(value)
++      ? value.replace(/^Bearer\s+/i, "").trim()
+       : "";
+   }
+@@
+   async function getPiUser(accessToken) {
+@@
+-      const uid = clean(response.data?.uid);
+-      const username = clean(response.data?.username);
++      /*
++       * Accept the current UserDTO shape and the nested form used by
++       * earlier Platform API examples. In both cases the server remains
++       * the source of truth; the browser-supplied uid is never trusted.
++       */
++      const body = response.data || {};
++      const user = body.user && typeof body.user === "object"
++        ? body.user
++        : body;
++      const uid = clean(user.uid);
++      const username = clean(user.username);
+       if (!uid || !username) throw new Error("PI_IDENTITY_INCOMPLETE");
+       return { uid, username, token };
+@@
+   function validatePaymentIdentity(payment, piUser) {
+@@
+   }
+
+-  async function validateFunding(payment, projectId) {
++  function validatePaymentDestination(payment, treasury) {
++    const destination = clean(payment?.to_address);
++    const expected = clean(treasury?.treasury_wallet);
++
++    if (destination && expected && destination !== expected) {
++      throw new Error("PI_PAYMENT_RECIPIENT_MISMATCH");
++    }
++  }
++
++  function validateCompletionTxid(payment, txid) {
++    const expected = clean(payment?.transaction?.txid);
++    const supplied = clean(txid);
++
++    if (expected && supplied && expected !== supplied) {
++      throw new Error("PI_PAYMENT_TXID_MISMATCH");
++    }
++  }
++
++  async function validateFunding(
++    payment,
++    projectId,
++    { enforceRemaining = true } = {}
++  ) {
+     const project = await getApprovedProject(projectId);
+     const treasury = await getTreasury(project.id);
+     const verified = await verifiedLiquidity(project.id);
+     const required = Math.max(MIN_LIQUIDITY, Number(treasury.required_liquidity || 0));
+     const due = Math.max(0, required - verified);
+     const amount = amountFromPayment(payment);
+
+-    if (due <= 0) throw new Error("PROJECT_LIQUIDITY_ALREADY_READY");
+-    if (amount < due) throw new Error("LIQUIDITY_AMOUNT_BELOW_REMAINING_REQUIREMENT");
++    if (enforceRemaining) {
++      if (due <= 0) throw new Error("PROJECT_LIQUIDITY_ALREADY_READY");
++      if (amount < due) {
++        throw new Error("LIQUIDITY_AMOUNT_BELOW_REMAINING_REQUIREMENT");
++      }
++    }
+
+     return { project, treasury, verified, required, due };
+   }
+@@
+       PI_PAYMENT_NETWORK_INVALID: 400,
+       PI_PAYMENT_DIRECTION_INVALID: 400,
+       PI_PAYMENT_METADATA_NETWORK_INVALID: 400,
+       PI_PAYMENT_METADATA_ACTION_INVALID: 400,
++      PI_PAYMENT_RECIPIENT_MISMATCH: 400,
++      PI_PAYMENT_TXID_MISMATCH: 400,
++      PI_PAYMENT_CANCELLED: 409,
+       PI_PAYMENT_TRANSACTION_NOT_VERIFIED: 409,
+     };
+@@
+       const payment = await getPayment(paymentId);
+       validatePaymentIdentity(payment, piUser);
+       const funding = await validateFunding(payment, projectId);
++      validatePaymentDestination(payment, funding.treasury);
+
+       if (clean(payment.metadata?.project_id) && clean(payment.metadata.project_id) !== funding.project.id) {
+         throw new Error("PI_PAYMENT_PROJECT_MISMATCH");
+       }
+       if (clean(payment.metadata?.project_code) && clean(payment.metadata.project_code) !== funding.project.project_code) {
+         throw new Error("PI_PAYMENT_PROJECT_MISMATCH");
+       }
+
+-      const approved = await approvePayment(paymentId);
++      if (payment.status?.cancelled || payment.status?.user_cancelled) {
++        throw new Error("PI_PAYMENT_CANCELLED");
++      }
++
++      const approved = payment.status?.developer_approved
++        ? payment
++        : await approvePayment(paymentId);
++
+       const record = await upsertPaymentRecord({
+         payment,
+@@
+       const payment = await getPayment(paymentId);
+       validatePaymentIdentity(payment, piUser);
+-      const funding = await validateFunding(payment, projectId);
++      const funding = await validateFunding(payment, projectId, {
++        enforceRemaining: false
++      });
++      validatePaymentDestination(payment, funding.treasury);
++      validateCompletionTxid(payment, txid);
+
+       if (clean(payment.metadata?.project_id) && clean(payment.metadata.project_id) !== funding.project.id) {
+         throw new Error("PI_PAYMENT_PROJECT_MISMATCH");
+       }
+
+-      const completed = await completePayment(paymentId, txid);
++      const completed = payment.status?.developer_completed
++        ? payment
++        : await completePayment(paymentId, txid);
++
+       const record = await upsertPaymentRecord({
+         payment,
+@@
+       const projectId = clean(payment.metadata?.project_id);
+       if (!projectId) throw new Error("PI_PAYMENT_PROJECT_REQUIRED");
+-      const funding = await validateFunding(payment, projectId);
++      const funding = await validateFunding(payment, projectId, {
++        enforceRemaining: false
++      });
++      validatePaymentDestination(payment, funding.treasury);
++      if (txid) validateCompletionTxid(payment, txid);
+
+       if (!txid) {
+         return res.json({
