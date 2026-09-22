@@ -851,9 +851,12 @@ function createTestnetLiquidityPaymentRouter({
 
   router.post("/incomplete", async (req, res) => {
     try {
-      const { session, piUser } =
-        await validateSessionAndPiIdentity(req);
-
+      /*
+       * Pi's incomplete-payment callback may fire before authenticate()
+       * resolves, so the callback has no user access token and must not
+       * require the ALBUKHR Testnet session. The server authenticates the
+       * payment itself using the server-side Pi API key.
+       */
       const paymentIdentifier =
         clean(req.body?.paymentId || req.body?.identifier);
 
@@ -864,7 +867,6 @@ function createTestnetLiquidityPaymentRouter({
       const payment = await getPayment(paymentIdentifier);
 
       validatePaymentBasics(payment);
-      validatePaymentUser(payment, piUser);
       validatePaymentDestination(payment);
 
       const identity =
@@ -922,8 +924,8 @@ function createTestnetLiquidityPaymentRouter({
         payment: completedPayment,
         project,
         treasury,
-        piUser,
-        session,
+        piUser: null,
+        session: null,
         piStatus: "completed",
         txid,
       });
