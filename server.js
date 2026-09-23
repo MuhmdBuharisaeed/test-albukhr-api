@@ -95,11 +95,12 @@ app.use(
     ],
 
     allowedHeaders: [
-      "Authorization",
-      "Content-Type",
-      "X-Admin-Key",
-      "X-Testnet-Session"
-    ],
+  "Authorization",
+  "Content-Type",
+  "X-Admin-Key",
+  "X-Testnet-Session",
+  "X-Testnet-Admin-Session"
+],
 
     credentials: false
   })
