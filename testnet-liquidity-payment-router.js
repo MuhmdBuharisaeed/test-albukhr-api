@@ -190,56 +190,39 @@ function createTestnetLiquidityPaymentRouter({
 
     const { data, error } = await supabase
       .from("testnet_admin_sessions")
-      .select(
-        "id,network,expires_at,revoked_at,roles"
-      )
+      .select("id,admin_user_id,email,roles,scoped_projects,network,expires_at,revoked_at")
       .eq("session_hash", hash)
       .eq("network", NETWORK)
       .maybeSingle();
 
     if (error) {
-      throw new Error(
-        "TESTNET_ADMIN_SESSION_LOOKUP_FAILED"
-      );
+      throw new Error("TESTNET_ADMIN_SESSION_LOOKUP_FAILED");
     }
 
     if (!data) {
-      throw new Error(
-        "TESTNET_ADMIN_SESSION_INVALID"
-      );
+      throw new Error("TESTNET_ADMIN_SESSION_INVALID");
     }
 
     if (data.revoked_at) {
-      throw new Error(
-        "TESTNET_ADMIN_SESSION_REVOKED"
-      );
+      throw new Error("TESTNET_ADMIN_SESSION_REVOKED");
     }
 
     if (
       !data.expires_at ||
       new Date(data.expires_at).getTime() <= Date.now()
     ) {
-      throw new Error(
-        "TESTNET_ADMIN_SESSION_EXPIRED"
-      );
+      throw new Error("TESTNET_ADMIN_SESSION_EXPIRED");
     }
 
     const roles = Array.isArray(data.roles)
       ? data.roles.map(clean)
       : [];
 
-    /*
-     * Finance admins are allowed to execute financial liquidity
-     * operations. Super admins retain full access.
-     * Ownership transfer remains a separate Super Admin operation.
-     */
     if (
       roles.indexOf("super_admin") === -1 &&
       roles.indexOf("finance_admin") === -1
     ) {
-      throw new Error(
-        "TESTNET_ADMIN_ROLE_REQUIRED"
-      );
+      throw new Error("TESTNET_ADMIN_ROLE_REQUIRED");
     }
 
     return {
@@ -248,19 +231,7 @@ function createTestnetLiquidityPaymentRouter({
     };
   }
 
-  async function validateAdminAndPiIdentity(req) {
-    const adminSession =
-      await getTestnetAdminSession(req);
-
-    const piUser =
-      await getPiUser(bearer(req));
-
-    return {
-      adminSession,
-      piUser,
-    };
-  }
-
+  async function getPiUser(accessToken) {
     const token = clean(accessToken);
 
     if (!token) {
@@ -943,6 +914,16 @@ function createTestnetLiquidityPaymentRouter({
     };
   }
 
+  async function validateAdminAndPiIdentity(req) {
+    const adminSession = await getTestnetAdminSession(req);
+    const piUser = await getPiUser(bearer(req));
+
+    return {
+      adminSession,
+      piUser,
+    };
+  }
+
   router.post(
     "/approve",
     async (req, res) => {
@@ -1243,7 +1224,6 @@ function createTestnetLiquidityPaymentRouter({
     }
   );
 
-
   /*
    * ADMIN LIQUIDITY PAYMENT FLOW
    *
@@ -1527,6 +1507,97 @@ function createTestnetLiquidityPaymentRouter({
           res,
           error
         );
+      }
+    }
+  );
+
+  router.post(
+    "/admin-incomplete",
+    async (req, res) => {
+      try {
+        const {
+          adminSession,
+          piUser,
+        } = await validateAdminAndPiIdentity(req);
+
+        const paymentIdentifier = clean(
+          req.body?.paymentId ||
+          req.body?.identifier
+        );
+
+        if (!paymentIdentifier) {
+          throw new Error("PAYMENT_ID_REQUIRED");
+        }
+
+        const payment = await getPayment(paymentIdentifier);
+
+        validatePaymentBasics(payment);
+        validatePaymentUser(payment, piUser);
+        validatePaymentDestination(payment);
+
+        const state = await validateAdminPaymentProject(
+          payment,
+          req.body
+        );
+
+        const txid = clean(
+          req.body?.txid ||
+          req.body?.transaction?.txid ||
+          payment?.transaction?.txid
+        );
+
+        if (!txid) {
+          return res.status(409).json({
+            success: false,
+            network: NETWORK,
+            error: transactionVerified(payment)
+              ? "PI_PAYMENT_TXID_REQUIRED"
+              : "PI_PAYMENT_TRANSACTION_NOT_VERIFIED",
+            payment_id: paymentIdentifier,
+          });
+        }
+
+        validateCompletionTxid(payment, txid);
+
+        if (!paymentDeveloperApproved(payment)) {
+          await approvePayment(paymentIdentifier);
+        }
+
+        const completed = paymentDeveloperCompleted(payment)
+          ? payment
+          : await completePayment(paymentIdentifier, txid);
+
+        const completedPayment = paymentDeveloperCompleted(payment)
+          ? payment
+          : await getPayment(paymentIdentifier);
+
+        const record = await upsertPaymentRecord({
+          payment: completedPayment,
+          project: state.project,
+          treasury: state.treasury,
+          piUser,
+          session: null,
+          piStatus: "completed",
+          txid,
+        });
+
+        return res.json({
+          success: true,
+          network: NETWORK,
+          recovered: true,
+          payment_id: paymentIdentifier,
+          txid,
+          project_code: state.project.project_code,
+          admin_roles: adminSession.roles,
+          payment: completed,
+          record,
+        });
+      } catch (error) {
+        console.error(
+          "[TESTNET ADMIN LIQUIDITY INCOMPLETE]",
+          error?.message || error
+        );
+        return sendError(res, error);
       }
     }
   );
