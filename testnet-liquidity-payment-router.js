@@ -1,34 +1,21 @@
 const express = require("express");
 
 /*
- * ALBUKHR TESTNET LIQUIDITY PAYMENT ROUTER v2
+ * ALBUKHR TESTNET LIQUIDITY PAYMENT ROUTER v3
  *
  * Purpose:
  *   Handle Pi Testnet User-to-App payments that fund a selected
  *   ALBUKHR Testnet project's liquidity requirement.
  *
- * Architectural boundaries:
- *   - Testnet only.
- *   - Requires an existing ALBUKHR Testnet gateway session.
- *   - Pi access token is ONLY the Testnet Pi token supplied by
- *     the Testnet Pi SDK payment flow. It is verified server-side
- *     through Pi /me and is never persisted.
- *   - Mainnet Pi access tokens are never accepted or stored here.
- *   - Project identity is authoritative from Pi payment metadata.
- *   - project_treasury is the ALBUKHR project treasury/readiness
- *     configuration. It is NOT assumed to be the Pi App wallet
- *     that receives a U2A payment.
- *   - project_liquidity_payments is the payment record source.
- *   - Verification remains an admin-controlled operation through
- *     the existing testnet-liquidity-admin Edge Function.
+ * Step 7 additive security boundary:
+ *   - The project.owner_user_id binding is authoritative.
+ *   - /approve and /complete require the Testnet gateway session
+ *     identity to be the bound project owner.
+ *   - /incomplete has no Testnet session by design, so it requires
+ *     the Pi PaymentDTO user_uid to match the bound owner's pi_uid.
  *
- * Pi payment flow:
- *   createPayment()
- *      -> /approve
- *      -> user signs Testnet transaction
- *      -> /complete
- *      -> payment record remains verification_status=pending
- *      -> Testnet admin verifies the completed payment
+ * Existing payment, treasury, verification and Pi API logic is
+ * preserved. Mainnet boundaries are preserved.
  */
 
 function createTestnetLiquidityPaymentRouter({
@@ -65,8 +52,7 @@ function createTestnetLiquidityPaymentRouter({
   }
 
   function testnetSessionToken(req) {
-    const value = clean(req.get("x-testnet-session"));
-    return value;
+    return clean(req.get("x-testnet-session"));
   }
 
   function errorCode(error) {
@@ -96,10 +82,17 @@ function createTestnetLiquidityPaymentRouter({
       PI_PAYMENT_RECIPIENT_MISMATCH: 400,
       PROJECT_ID_REQUIRED: 400,
       PROJECT_CODE_REQUIRED: 400,
+      PROJECT_READ_FAILED: 500,
       PROJECT_NOT_APPROVED: 400,
+      PROJECT_OWNER_NOT_BOUND: 403,
+      PROJECT_OWNER_NOT_FOUND: 403,
+      PROJECT_OWNER_ACCESS_DENIED: 403,
+      OWNER_USER_READ_FAILED: 500,
+      TREASURY_READ_FAILED: 500,
       TREASURY_NOT_CONFIGURED: 400,
       TREASURY_NOT_ACTIVE: 400,
       TREASURY_WALLET_REQUIRED: 400,
+      LIQUIDITY_READ_FAILED: 500,
       PROJECT_LIQUIDITY_ALREADY_READY: 409,
       LIQUIDITY_AMOUNT_BELOW_REMAINING_REQUIREMENT: 400,
       PAYMENT_ID_REQUIRED: 400,
@@ -111,6 +104,8 @@ function createTestnetLiquidityPaymentRouter({
       LIQUIDITY_PAYMENT_UPSERT_FAILED: 500,
       PI_APPROVE_FAILED: 502,
       PI_COMPLETE_FAILED: 502,
+      TESTNET_SESSION_LOOKUP_FAILED: 500,
+      PI_ACCESS_TOKEN_VERIFY_FAILED: 502,
     };
 
     const status = Number(
@@ -418,8 +413,6 @@ function createTestnetLiquidityPaymentRouter({
      * project_treasury.treasury_wallet is intentionally NOT used
      * as the PaymentDTO.to_address expectation because Pi.createPayment
      * does not choose an arbitrary per-project recipient.
-     *
-     * When PI_TESTNET_APP_WALLET is configured, enforce it.
      */
     if (!expected) return;
 
@@ -457,7 +450,7 @@ function createTestnetLiquidityPaymentRouter({
     const { data, error } = await supabase
       .from("projects")
       .select(
-        "id,project_code,slug,name,status,network"
+        "id,project_code,slug,name,status,network,owner_user_id"
       )
       .eq("id", id)
       .eq("project_code", code)
@@ -474,6 +467,85 @@ function createTestnetLiquidityPaymentRouter({
     }
 
     return data;
+  }
+
+  /*
+   * PROJECT OWNERSHIP SECURITY BOUNDARY
+   *
+   * projects.owner_user_id is the authoritative ownership binding.
+   * project_owner_profiles is identity metadata and is NOT used as
+   * the authorization source here.
+   */
+  async function getProjectOwner(project) {
+    const ownerUserId =
+      clean(project?.owner_user_id);
+
+    if (!ownerUserId) {
+      throw new Error("PROJECT_OWNER_NOT_BOUND");
+    }
+
+    const { data, error } = await supabase
+      .from("users")
+      .select("id,pi_uid,network")
+      .eq("id", ownerUserId)
+      .eq("network", NETWORK)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error("OWNER_USER_READ_FAILED");
+    }
+
+    if (!data) {
+      throw new Error("PROJECT_OWNER_NOT_FOUND");
+    }
+
+    if (!clean(data.pi_uid)) {
+      throw new Error("PROJECT_OWNER_ACCESS_DENIED");
+    }
+
+    return data;
+  }
+
+  function assertSessionIsProjectOwner(
+    session,
+    owner
+  ) {
+    const sessionPiUid =
+      clean(session?.pi_uid);
+
+    const ownerPiUid =
+      clean(owner?.pi_uid);
+
+    if (
+      !sessionPiUid ||
+      !ownerPiUid ||
+      sessionPiUid !== ownerPiUid
+    ) {
+      throw new Error(
+        "PROJECT_OWNER_ACCESS_DENIED"
+      );
+    }
+  }
+
+  function assertPaymentIsProjectOwnerPayment(
+    payment,
+    owner
+  ) {
+    const paymentPiUid =
+      clean(payment?.user_uid);
+
+    const ownerPiUid =
+      clean(owner?.pi_uid);
+
+    if (
+      !paymentPiUid ||
+      !ownerPiUid ||
+      paymentPiUid !== ownerPiUid
+    ) {
+      throw new Error(
+        "PROJECT_OWNER_ACCESS_DENIED"
+      );
+    }
   }
 
   async function getTreasury(projectId) {
@@ -539,33 +611,60 @@ function createTestnetLiquidityPaymentRouter({
     };
   }
 
-  async function validateFunding(payment, projectId, treasury) {
-    const state = await fundingState(projectId, treasury);
-    const amount = paymentAmount(payment);
+  async function validateFunding(
+    payment,
+    projectId,
+    treasury
+  ) {
+    const state =
+      await fundingState(
+        projectId,
+        treasury
+      );
+
+    const amount =
+      paymentAmount(payment);
 
     if (state.due <= 0) {
-      throw new Error("PROJECT_LIQUIDITY_ALREADY_READY");
+      throw new Error(
+        "PROJECT_LIQUIDITY_ALREADY_READY"
+      );
     }
 
     if (amount < state.due) {
-      throw new Error("LIQUIDITY_AMOUNT_BELOW_REMAINING_REQUIREMENT");
+      throw new Error(
+        "LIQUIDITY_AMOUNT_BELOW_REMAINING_REQUIREMENT"
+      );
     }
 
     return state;
   }
 
-  async function readExistingPayment(paymentIdentifier) {
-    const { data, error } = await supabase
-      .from("project_liquidity_payments")
-      .select(
-        "id,payment_id,project_id,payer_pi_uid,amount,recipient_wallet,network,action,pi_status,verification_status,verified_at,verification_reference,metadata"
-      )
-      .eq("payment_id", paymentIdentifier)
-      .eq("network", NETWORK)
-      .maybeSingle();
+  async function readExistingPayment(
+    paymentIdentifier
+  ) {
+    const { data, error } =
+      await supabase
+        .from(
+          "project_liquidity_payments"
+        )
+        .select(
+          "id,payment_id,project_id,payer_pi_uid,amount,recipient_wallet,network,action,pi_status,verification_status,verified_at,verification_reference,metadata"
+        )
+        .eq(
+          "payment_id",
+          paymentIdentifier
+        )
+        .eq(
+          "network",
+          NETWORK
+        )
+        .maybeSingle();
 
     if (error) {
-      throw new Error("LIQUIDITY_PAYMENT_READ_FAILED");
+      throw new Error(
+        "LIQUIDITY_PAYMENT_READ_FAILED"
+      );
     }
 
     return data || null;
@@ -580,19 +679,34 @@ function createTestnetLiquidityPaymentRouter({
     piStatus,
     txid = null,
   }) {
-    const identifier = paymentId(payment);
-    const amount = paymentAmount(payment);
+    const identifier =
+      paymentId(payment);
+
+    const amount =
+      paymentAmount(payment);
 
     if (!identifier) {
-      throw new Error("PAYMENT_ID_REQUIRED");
+      throw new Error(
+        "PAYMENT_ID_REQUIRED"
+      );
     }
 
-    if (amount === null || amount <= 0) {
-      throw new Error("PI_PAYMENT_AMOUNT_INVALID");
+    if (
+      amount === null ||
+      amount <= 0
+    ) {
+      throw new Error(
+        "PI_PAYMENT_AMOUNT_INVALID"
+      );
     }
 
-    const existing = await readExistingPayment(identifier);
-    const currentMetadata = paymentMetadata(payment);
+    const existing =
+      await readExistingPayment(
+        identifier
+      );
+
+    const currentMetadata =
+      paymentMetadata(payment);
 
     const metadata = {
       ...currentMetadata,
@@ -600,355 +714,608 @@ function createTestnetLiquidityPaymentRouter({
       action: ACTION,
       project_id: project.id,
       project_code: project.project_code,
-      testnet_pi_uid: clean(piUser?.uid || payment?.user_uid) || null,
-      gateway_pi_uid: clean(session?.pi_uid) || null,
+      testnet_pi_uid:
+        clean(
+          piUser?.uid ||
+          payment?.user_uid
+        ) || null,
+      gateway_pi_uid:
+        clean(session?.pi_uid) ||
+        null,
     };
 
     if (piUser?.username) {
-      metadata.username = piUser.username;
+      metadata.username =
+        piUser.username;
     }
 
     if (txid) {
-      metadata.txid = txid;
+      metadata.txid =
+        txid;
     }
 
     const payload = {
       payment_id: identifier,
       project_id: project.id,
       payer_pi_uid:
-        clean(piUser?.uid || payment?.user_uid),
+        clean(
+          piUser?.uid ||
+          payment?.user_uid
+        ),
       amount,
-      /*
-       * Keep the existing schema meaning intact: this is the ALBUKHR
-       * project treasury wallet configured in project_treasury.
-       */
-      recipient_wallet: treasury.treasury_wallet,
+      recipient_wallet:
+        treasury.treasury_wallet,
       network: NETWORK,
       action: ACTION,
       pi_status: piStatus,
       verification_status:
-        existing?.verification_status || "pending",
+        existing?.verification_status ||
+        "pending",
       verified_at:
-        existing?.verified_at || null,
+        existing?.verified_at ||
+        null,
       verification_reference:
-        existing?.verification_reference || null,
+        existing?.verification_reference ||
+        null,
       metadata,
-      updated_at: new Date().toISOString(),
+      updated_at:
+        new Date().toISOString(),
     };
 
-    const { data, error } = await supabase
-      .from("project_liquidity_payments")
-      .upsert(payload, { onConflict: "payment_id" })
-      .select(
-        "id,payment_id,project_id,payer_pi_uid,amount,recipient_wallet,network,action,pi_status,verification_status,verified_at,verification_reference,metadata"
-      )
-      .maybeSingle();
+    const { data, error } =
+      await supabase
+        .from(
+          "project_liquidity_payments"
+        )
+        .upsert(
+          payload,
+          {
+            onConflict:
+              "payment_id",
+          }
+        )
+        .select(
+          "id,payment_id,project_id,payer_pi_uid,amount,recipient_wallet,network,action,pi_status,verification_status,verified_at,verification_reference,metadata"
+        )
+        .maybeSingle();
 
     if (error || !data) {
-      throw new Error("LIQUIDITY_PAYMENT_UPSERT_FAILED");
+      throw new Error(
+        "LIQUIDITY_PAYMENT_UPSERT_FAILED"
+      );
     }
 
     return data;
   }
 
-  function paymentDeveloperApproved(payment) {
+  function paymentDeveloperApproved(
+    payment
+  ) {
     return Boolean(
-      payment?.status?.developer_approved === true ||
-      payment?.status?.developerApproved === true
+      payment?.status?.developer_approved ===
+        true ||
+      payment?.status?.developerApproved ===
+        true
     );
   }
 
-  function paymentDeveloperCompleted(payment) {
+  function paymentDeveloperCompleted(
+    payment
+  ) {
     return Boolean(
-      payment?.status?.developer_completed === true ||
-      payment?.status?.developerCompleted === true
+      payment?.status?.developer_completed ===
+        true ||
+      payment?.status?.developerCompleted ===
+        true
     );
   }
 
-  function transactionVerified(payment) {
+  function transactionVerified(
+    payment
+  ) {
     return Boolean(
-      payment?.status?.transaction_verified === true ||
-      payment?.status?.transactionVerified === true ||
-      payment?.transaction?.verified === true
+      payment?.status?.transaction_verified ===
+        true ||
+      payment?.status?.transactionVerified ===
+        true ||
+      payment?.transaction?.verified ===
+        true
     );
   }
 
-  async function validateSessionAndPiIdentity(req) {
-    const session = await getTestnetSession(req);
-    const piUser = await getPiUser(bearer(req));
+  async function validateSessionAndPiIdentity(
+    req
+  ) {
+    const session =
+      await getTestnetSession(req);
+
+    const piUser =
+      await getPiUser(
+        bearer(req)
+      );
 
     /*
      * Do NOT compare piUser.uid with session.pi_uid.
      *
-     * The Testnet gateway session is established by the ALBUKHR
-     * Mainnet security handoff. Pi's UID is app-local and can differ
-     * between separately registered Testnet/Mainnet apps.
+     * The Testnet gateway session remains the ALBUKHR
+     * authorization identity. Pi's user UID is used to verify
+     * the current payment callback separately.
      */
 
-    return { session, piUser };
+    return {
+      session,
+      piUser,
+    };
   }
 
-  router.post("/approve", async (req, res) => {
-    try {
-      const { session, piUser } =
-        await validateSessionAndPiIdentity(req);
+  router.post(
+    "/approve",
+    async (req, res) => {
+      try {
+        const {
+          session,
+          piUser,
+        } =
+          await validateSessionAndPiIdentity(
+            req
+          );
 
-      const paymentIdentifier =
-        clean(req.body?.paymentId);
+        const paymentIdentifier =
+          clean(
+            req.body?.paymentId
+          );
 
-      if (!paymentIdentifier) {
-        throw new Error("PAYMENT_ID_REQUIRED");
-      }
+        if (!paymentIdentifier) {
+          throw new Error(
+            "PAYMENT_ID_REQUIRED"
+          );
+        }
 
-      const payment = await getPayment(paymentIdentifier);
+        const payment =
+          await getPayment(
+            paymentIdentifier
+          );
 
-      validatePaymentBasics(payment);
-      validatePaymentUser(payment, piUser);
-      validatePaymentDestination(payment);
+        validatePaymentBasics(
+          payment
+        );
 
-      const identity =
-        resolveProjectIdentity(payment, req.body);
+        validatePaymentUser(
+          payment,
+          piUser
+        );
 
-      validateMetadata(
-        payment,
-        identity.projectId,
-        identity.projectCode
-      );
+        validatePaymentDestination(
+          payment
+        );
 
-      const project = await getApprovedProject(
-        identity.projectId,
-        identity.projectCode
-      );
+        const identity =
+          resolveProjectIdentity(
+            payment,
+            req.body
+          );
 
-      const treasury = await getTreasury(project.id);
-      const funding = await validateFunding(
-        payment,
-        project.id,
-        treasury
-      );
+        validateMetadata(
+          payment,
+          identity.projectId,
+          identity.projectCode
+        );
 
-      const approved =
-        paymentDeveloperApproved(payment)
-          ? payment
-          : await approvePayment(paymentIdentifier);
+        const project =
+          await getApprovedProject(
+            identity.projectId,
+            identity.projectCode
+          );
 
-      const record = await upsertPaymentRecord({
-        payment,
-        project,
-        treasury,
-        piUser,
-        session,
-        piStatus: "approved",
-      });
+        /*
+         * OWNER GATE:
+         * Only the project's bound Testnet owner may approve
+         * this project's liquidity payment.
+         */
+        const owner =
+          await getProjectOwner(
+            project
+          );
 
-      return res.json({
-        success: true,
-        network: NETWORK,
-        payment_id: paymentIdentifier,
-        project_code: project.project_code,
-        required_liquidity: funding.required,
-        verified_liquidity: funding.verified,
-        remaining_before_payment: funding.due,
-        payment_amount: paymentAmount(payment),
-        approval: approved,
-        record,
-      });
-    } catch (error) {
-      console.error(
-        "[TESTNET LIQUIDITY APPROVE]",
-        error?.message || error
-      );
-      return sendError(res, error);
-    }
-  });
+        assertSessionIsProjectOwner(
+          session,
+          owner
+        );
 
-  router.post("/complete", async (req, res) => {
-    try {
-      const { session, piUser } =
-        await validateSessionAndPiIdentity(req);
+        const treasury =
+          await getTreasury(
+            project.id
+          );
 
-      const paymentIdentifier =
-        clean(req.body?.paymentId);
-      const txid = clean(req.body?.txid);
+        const funding =
+          await validateFunding(
+            payment,
+            project.id,
+            treasury
+          );
 
-      if (!paymentIdentifier || !txid) {
-        throw new Error("PAYMENT_COMPLETION_FIELDS_REQUIRED");
-      }
+        const approved =
+          paymentDeveloperApproved(
+            payment
+          )
+            ? payment
+            : await approvePayment(
+                paymentIdentifier
+              );
 
-      const payment = await getPayment(paymentIdentifier);
+        const record =
+          await upsertPaymentRecord({
+            payment,
+            project,
+            treasury,
+            piUser,
+            session,
+            piStatus: "approved",
+          });
 
-      validatePaymentBasics(payment);
-      validatePaymentUser(payment, piUser);
-      validatePaymentDestination(payment);
-      validateCompletionTxid(payment, txid);
-
-      if (!paymentDeveloperApproved(payment)) {
-        throw new Error("PI_PAYMENT_NOT_APPROVED");
-      }
-
-      const identity =
-        resolveProjectIdentity(payment, req.body);
-
-      validateMetadata(
-        payment,
-        identity.projectId,
-        identity.projectCode
-      );
-
-      const project = await getApprovedProject(
-        identity.projectId,
-        identity.projectCode
-      );
-
-      const treasury = await getTreasury(project.id);
-
-      const completed =
-        paymentDeveloperCompleted(payment)
-          ? payment
-          : await completePayment(
-              paymentIdentifier,
-              txid
-            );
-
-      /*
-       * Fetch again after completion so that the stored payment state
-       * comes from Pi's post-completion PaymentDTO rather than from
-       * client claims alone.
-       */
-      const completedPayment = paymentDeveloperCompleted(payment)
-        ? payment
-        : await getPayment(paymentIdentifier);
-
-      const record = await upsertPaymentRecord({
-        payment: completedPayment,
-        project,
-        treasury,
-        piUser,
-        session,
-        piStatus: "completed",
-        txid,
-      });
-
-      return res.json({
-        success: true,
-        network: NETWORK,
-        payment_id: paymentIdentifier,
-        txid,
-        project_code: project.project_code,
-        payment: completed,
-        record,
-        verification_status: record.verification_status,
-        transaction_verified: transactionVerified(completedPayment),
-      });
-    } catch (error) {
-      console.error(
-        "[TESTNET LIQUIDITY COMPLETE]",
-        error?.message || error
-      );
-      return sendError(res, error);
-    }
-  });
-
-  router.post("/incomplete", async (req, res) => {
-    try {
-      /*
-       * Pi's incomplete-payment callback may fire before authenticate()
-       * resolves, so the callback has no user access token and must not
-       * require the ALBUKHR Testnet session. The server authenticates the
-       * payment itself using the server-side Pi API key.
-       */
-      const paymentIdentifier =
-        clean(req.body?.paymentId || req.body?.identifier);
-
-      if (!paymentIdentifier) {
-        throw new Error("PAYMENT_ID_REQUIRED");
-      }
-
-      const payment = await getPayment(paymentIdentifier);
-
-      validatePaymentBasics(payment);
-      validatePaymentDestination(payment);
-
-      const identity =
-        resolveProjectIdentity(payment, req.body);
-
-      validateMetadata(
-        payment,
-        identity.projectId,
-        identity.projectCode
-      );
-
-      const project = await getApprovedProject(
-        identity.projectId,
-        identity.projectCode
-      );
-
-      const treasury = await getTreasury(project.id);
-
-      const txid = clean(
-        req.body?.txid ||
-        req.body?.transaction?.txid ||
-        payment?.transaction?.txid
-      );
-
-      if (!txid) {
-        return res.status(409).json({
-          success: false,
+        return res.json({
+          success: true,
           network: NETWORK,
-          error: transactionVerified(payment)
-            ? "PI_PAYMENT_TXID_REQUIRED"
-            : "PI_PAYMENT_TRANSACTION_NOT_VERIFIED",
-          payment_id: paymentIdentifier,
+          payment_id:
+            paymentIdentifier,
+          project_code:
+            project.project_code,
+          required_liquidity:
+            funding.required,
+          verified_liquidity:
+            funding.verified,
+          remaining_before_payment:
+            funding.due,
+          payment_amount:
+            paymentAmount(payment),
+          approval: approved,
+          record,
         });
+      } catch (error) {
+        console.error(
+          "[TESTNET LIQUIDITY APPROVE]",
+          error?.message || error
+        );
+        return sendError(
+          res,
+          error
+        );
       }
-
-      validateCompletionTxid(payment, txid);
-
-      if (!paymentDeveloperApproved(payment)) {
-        await approvePayment(paymentIdentifier);
-      }
-
-      const completed =
-        paymentDeveloperCompleted(payment)
-          ? payment
-          : await completePayment(
-              paymentIdentifier,
-              txid
-            );
-
-      const completedPayment = paymentDeveloperCompleted(payment)
-        ? payment
-        : await getPayment(paymentIdentifier);
-
-      const record = await upsertPaymentRecord({
-        payment: completedPayment,
-        project,
-        treasury,
-        piUser: null,
-        session: null,
-        piStatus: "completed",
-        txid,
-      });
-
-      return res.json({
-        success: true,
-        network: NETWORK,
-        recovered: true,
-        payment_id: paymentIdentifier,
-        txid,
-        payment: completed,
-        record,
-      });
-    } catch (error) {
-      console.error(
-        "[TESTNET LIQUIDITY INCOMPLETE]",
-        error?.message || error
-      );
-      return sendError(res, error);
     }
-  });
+  );
+
+  router.post(
+    "/complete",
+    async (req, res) => {
+      try {
+        const {
+          session,
+          piUser,
+        } =
+          await validateSessionAndPiIdentity(
+            req
+          );
+
+        const paymentIdentifier =
+          clean(
+            req.body?.paymentId
+          );
+
+        const txid =
+          clean(
+            req.body?.txid
+          );
+
+        if (
+          !paymentIdentifier ||
+          !txid
+        ) {
+          throw new Error(
+            "PAYMENT_COMPLETION_FIELDS_REQUIRED"
+          );
+        }
+
+        const payment =
+          await getPayment(
+            paymentIdentifier
+          );
+
+        validatePaymentBasics(
+          payment
+        );
+
+        validatePaymentUser(
+          payment,
+          piUser
+        );
+
+        validatePaymentDestination(
+          payment
+        );
+
+        validateCompletionTxid(
+          payment,
+          txid
+        );
+
+        if (
+          !paymentDeveloperApproved(
+            payment
+          )
+        ) {
+          throw new Error(
+            "PI_PAYMENT_NOT_APPROVED"
+          );
+        }
+
+        const identity =
+          resolveProjectIdentity(
+            payment,
+            req.body
+          );
+
+        validateMetadata(
+          payment,
+          identity.projectId,
+          identity.projectCode
+        );
+
+        const project =
+          await getApprovedProject(
+            identity.projectId,
+            identity.projectCode
+          );
+
+        /*
+         * OWNER GATE:
+         * Re-check ownership at completion time so ownership
+         * cannot be bypassed by a stale approval.
+         */
+        const owner =
+          await getProjectOwner(
+            project
+          );
+
+        assertSessionIsProjectOwner(
+          session,
+          owner
+        );
+
+        const treasury =
+          await getTreasury(
+            project.id
+          );
+
+        const completed =
+          paymentDeveloperCompleted(
+            payment
+          )
+            ? payment
+            : await completePayment(
+                paymentIdentifier,
+                txid
+              );
+
+        const completedPayment =
+          paymentDeveloperCompleted(
+            payment
+          )
+            ? payment
+            : await getPayment(
+                paymentIdentifier
+              );
+
+        const record =
+          await upsertPaymentRecord({
+            payment:
+              completedPayment,
+            project,
+            treasury,
+            piUser,
+            session,
+            piStatus:
+              "completed",
+            txid,
+          });
+
+        return res.json({
+          success: true,
+          network: NETWORK,
+          payment_id:
+            paymentIdentifier,
+          txid,
+          project_code:
+            project.project_code,
+          payment: completed,
+          record,
+          verification_status:
+            record.verification_status,
+          transaction_verified:
+            transactionVerified(
+              completedPayment
+            ),
+        });
+      } catch (error) {
+        console.error(
+          "[TESTNET LIQUIDITY COMPLETE]",
+          error?.message || error
+        );
+        return sendError(
+          res,
+          error
+        );
+      }
+    }
+  );
+
+  router.post(
+    "/incomplete",
+    async (req, res) => {
+      try {
+        /*
+         * Pi's incomplete-payment callback may fire before authenticate()
+         * resolves, so this endpoint intentionally does NOT require the
+         * ALBUKHR Testnet session.
+         */
+        const paymentIdentifier =
+          clean(
+            req.body?.paymentId ||
+            req.body?.identifier
+          );
+
+        if (!paymentIdentifier) {
+          throw new Error(
+            "PAYMENT_ID_REQUIRED"
+          );
+        }
+
+        const payment =
+          await getPayment(
+            paymentIdentifier
+          );
+
+        validatePaymentBasics(
+          payment
+        );
+
+        validatePaymentDestination(
+          payment
+        );
+
+        const identity =
+          resolveProjectIdentity(
+            payment,
+            req.body
+          );
+
+        validateMetadata(
+          payment,
+          identity.projectId,
+          identity.projectCode
+        );
+
+        const project =
+          await getApprovedProject(
+            identity.projectId,
+            identity.projectCode
+          );
+
+        /*
+         * OWNER GATE FOR RECOVERY:
+         *
+         * Because no Testnet session exists here, bind the payment
+         * itself to the currently registered project's owner using
+         * PaymentDTO.user_uid -> users.pi_uid.
+         */
+        const owner =
+          await getProjectOwner(
+            project
+          );
+
+        assertPaymentIsProjectOwnerPayment(
+          payment,
+          owner
+        );
+
+        const treasury =
+          await getTreasury(
+            project.id
+          );
+
+        const txid =
+          clean(
+            req.body?.txid ||
+            req.body?.transaction?.txid ||
+            payment?.transaction?.txid
+          );
+
+        if (!txid) {
+          return res.status(409).json({
+            success: false,
+            network: NETWORK,
+            error:
+              transactionVerified(
+                payment
+              )
+                ? "PI_PAYMENT_TXID_REQUIRED"
+                : "PI_PAYMENT_TRANSACTION_NOT_VERIFIED",
+            payment_id:
+              paymentIdentifier,
+          });
+        }
+
+        validateCompletionTxid(
+          payment,
+          txid
+        );
+
+        if (
+          !paymentDeveloperApproved(
+            payment
+          )
+        ) {
+          await approvePayment(
+            paymentIdentifier
+          );
+        }
+
+        const completed =
+          paymentDeveloperCompleted(
+            payment
+          )
+            ? payment
+            : await completePayment(
+                paymentIdentifier,
+                txid
+              );
+
+        const completedPayment =
+          paymentDeveloperCompleted(
+            payment
+          )
+            ? payment
+            : await getPayment(
+                paymentIdentifier
+              );
+
+        const record =
+          await upsertPaymentRecord({
+            payment:
+              completedPayment,
+            project,
+            treasury,
+            piUser: null,
+            session: null,
+            piStatus:
+              "completed",
+            txid,
+          });
+
+        return res.json({
+          success: true,
+          network: NETWORK,
+          recovered: true,
+          payment_id:
+            paymentIdentifier,
+          txid,
+          payment: completed,
+          record,
+        });
+      } catch (error) {
+        console.error(
+          "[TESTNET LIQUIDITY INCOMPLETE]",
+          error?.message || error
+        );
+        return sendError(
+          res,
+          error
+        );
+      }
+    }
+  );
 
   return router;
 }
 
-module.exports = createTestnetLiquidityPaymentRouter;
+module.exports =
+  createTestnetLiquidityPaymentRouter;
