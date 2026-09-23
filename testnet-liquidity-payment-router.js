@@ -14,6 +14,12 @@ const express = require("express");
  *   - /incomplete has no Testnet session by design, so it requires
  *     the Pi PaymentDTO user_uid to match the bound owner's pi_uid.
  *
+ * Step 9 additive admin recovery boundary:
+ *   - /admin-incomplete is authorized by the Testnet Admin Session.
+ *   - It does NOT require a Pi access token because Pi may invoke the
+ *     incomplete-payment callback before Pi.authenticate() settles.
+ *   - Payment identity/state is verified server-to-server through Pi.
+ *
  * Existing payment, treasury, verification and Pi API logic is
  * preserved. Mainnet boundaries are preserved.
  */
@@ -1511,14 +1517,24 @@ function createTestnetLiquidityPaymentRouter({
     }
   );
 
+  /*
+   * ADMIN INCOMPLETE RECOVERY
+   *
+   * Pi may invoke onIncompletePaymentFound() while the client is
+   * still inside Pi.authenticate(). In that state the frontend may
+   * not yet have a settled Pi access token.
+   *
+   * The Testnet Admin Session is already the authorization boundary
+   * for this recovery path. Payment identity and transaction state
+   * are verified server-to-server through the Pi Platform API using
+   * the app's server API key.
+   */
   router.post(
     "/admin-incomplete",
     async (req, res) => {
       try {
-        const {
-          adminSession,
-          piUser,
-        } = await validateAdminAndPiIdentity(req);
+        const adminSession =
+          await getTestnetAdminSession(req);
 
         const paymentIdentifier = clean(
           req.body?.paymentId ||
@@ -1526,19 +1542,29 @@ function createTestnetLiquidityPaymentRouter({
         );
 
         if (!paymentIdentifier) {
-          throw new Error("PAYMENT_ID_REQUIRED");
+          throw new Error(
+            "PAYMENT_ID_REQUIRED"
+          );
         }
 
-        const payment = await getPayment(paymentIdentifier);
+        const payment =
+          await getPayment(
+            paymentIdentifier
+          );
 
-        validatePaymentBasics(payment);
-        validatePaymentUser(payment, piUser);
-        validatePaymentDestination(payment);
-
-        const state = await validateAdminPaymentProject(
-          payment,
-          req.body
+        validatePaymentBasics(
+          payment
         );
+
+        validatePaymentDestination(
+          payment
+        );
+
+        const state =
+          await validateAdminPaymentProject(
+            payment,
+            req.body
+          );
 
         const txid = clean(
           req.body?.txid ||
@@ -1557,29 +1583,42 @@ function createTestnetLiquidityPaymentRouter({
           });
         }
 
-        validateCompletionTxid(payment, txid);
+        validateCompletionTxid(
+          payment,
+          txid
+        );
 
         if (!paymentDeveloperApproved(payment)) {
-          await approvePayment(paymentIdentifier);
+          await approvePayment(
+            paymentIdentifier
+          );
         }
 
-        const completed = paymentDeveloperCompleted(payment)
-          ? payment
-          : await completePayment(paymentIdentifier, txid);
+        const completed =
+          paymentDeveloperCompleted(payment)
+            ? payment
+            : await completePayment(
+                paymentIdentifier,
+                txid
+              );
 
-        const completedPayment = paymentDeveloperCompleted(payment)
-          ? payment
-          : await getPayment(paymentIdentifier);
+        const completedPayment =
+          paymentDeveloperCompleted(payment)
+            ? payment
+            : await getPayment(
+                paymentIdentifier
+              );
 
-        const record = await upsertPaymentRecord({
-          payment: completedPayment,
-          project: state.project,
-          treasury: state.treasury,
-          piUser,
-          session: null,
-          piStatus: "completed",
-          txid,
-        });
+        const record =
+          await upsertPaymentRecord({
+            payment: completedPayment,
+            project: state.project,
+            treasury: state.treasury,
+            piUser: null,
+            session: null,
+            piStatus: "completed",
+            txid,
+          });
 
         return res.json({
           success: true,
@@ -1597,7 +1636,10 @@ function createTestnetLiquidityPaymentRouter({
           "[TESTNET ADMIN LIQUIDITY INCOMPLETE]",
           error?.message || error
         );
-        return sendError(res, error);
+        return sendError(
+          res,
+          error
+        );
       }
     }
   );
