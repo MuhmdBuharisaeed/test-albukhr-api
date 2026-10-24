@@ -90,6 +90,7 @@ function createTestnetLiquidityPaymentRouter({
       PI_PAYMENT_METADATA_ACTION_INVALID: 400,
       PI_PAYMENT_AMOUNT_INVALID: 400,
       PI_PAYMENT_RECIPIENT_MISMATCH: 400,
+      PI_TESTNET_APP_WALLET_REQUIRED: 503,
       PROJECT_ID_REQUIRED: 400,
       PROJECT_CODE_REQUIRED: 400,
       PROJECT_READ_FAILED: 500,
@@ -477,23 +478,26 @@ function createTestnetLiquidityPaymentRouter({
     }
   }
 
-  function validatePaymentDestination(payment) {
-    const expected = clean(piTestnetAppWallet);
+  
+function validatePaymentDestination(payment) {
+  const expected = clean(piTestnetAppWallet);
 
-    /*
-     * Pi U2A payments go to the registered Pi App wallet.
-     * project_treasury.treasury_wallet is intentionally NOT used
-     * as the PaymentDTO.to_address expectation because Pi.createPayment
-     * does not choose an arbitrary per-project recipient.
-     */
-    if (!expected) return;
-
-    const actual = clean(payment?.to_address);
-
-    if (actual && actual !== expected) {
-      throw new Error("PI_PAYMENT_RECIPIENT_MISMATCH");
-    }
+  /*
+   * Fail closed: the registered Testnet Pi App wallet must be
+   * configured on the Testnet API, and every verified PaymentDTO
+   * must identify that exact recipient. Never infer this from a
+   * project treasury wallet.
+   */
+  if (!expected) {
+    throw new Error("PI_TESTNET_APP_WALLET_REQUIRED");
   }
+
+  const actual = clean(payment?.to_address);
+
+  if (!actual || actual !== expected) {
+    throw new Error("PI_PAYMENT_RECIPIENT_MISMATCH");
+  }
+}
 
   function validateCompletionTxid(payment, txid) {
     const supplied = clean(txid);
