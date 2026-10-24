@@ -131,12 +131,14 @@ app.use(
    remain unchanged.
    ============================================================ */
 
+
 app.use(
   "/liquidity-payment",
   createTestnetLiquidityPaymentRouter({
     supabase,
     axios,
-    piApiKey: PI_API_KEY
+    piApiKey: PI_API_KEY,
+    piTestnetAppWallet: process.env.PI_TESTNET_APP_WALLET || ""
   })
 );
 
