@@ -284,6 +284,49 @@ function createTestnetLiquidityPaymentRouter({
     };
   }
 
+  function safePiApiErrorDetails(error) {
+  const status = Number(error?.response?.status || 0);
+  const code = clean(error?.code).slice(0, 50);
+  const data = error?.response?.data;
+
+  let reason = "";
+
+  if (typeof data === "string") {
+    reason = data;
+  } else if (data && typeof data === "object") {
+    const candidate = [
+      data.error,
+      data.message,
+      data.error_description,
+      data.code
+    ].find(
+      value =>
+        typeof value === "string" &&
+        value.trim()
+    );
+
+    reason = candidate || "";
+  }
+
+  reason = clean(reason)
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(
+      /\b(Bearer|Key)\s+[^\s,]+/gi,
+      "$1 [redacted]"
+    )
+    .replace(
+      /\b(authorization|token|secret|passphrase)\b\s*[:=]\s*[^\s,]+/gi,
+      "$1=[redacted]"
+    )
+    .slice(0, 160);
+
+  return {
+    upstreamStatus: status || null,
+    upstreamCode: code || null,
+    upstreamReason: reason || null
+  };
+  }
+
   async function getPayment(paymentId) {
     const id = clean(paymentId);
 
@@ -319,26 +362,54 @@ function createTestnetLiquidityPaymentRouter({
   }
 
   async function approvePayment(paymentId) {
-    try {
-      const response = await axios.post(
-        `${piApiBase}/payments/${encodeURIComponent(paymentId)}/approve`,
-        {},
-        {
-          headers: piKeyHeaders({
-            "Content-Type": "application/json",
-          }),
-          timeout: 15000,
-        }
-      );
+  try {
+    const response = await axios.post(
+      `${piApiBase}/payments/${encodeURIComponent(paymentId)}/approve`,
+      {},
+      {
+        headers: piKeyHeaders({
+          "Content-Type": "application/json",
+        }),
+        timeout: 15000,
+      }
+    );
 
-      return response.data || null;
-    } catch (error) {
-      const status = Number(error?.response?.status || 0);
-      const wrapped = new Error("PI_APPROVE_FAILED");
-      wrapped.status = status >= 400 && status < 600 ? status : 502;
-      wrapped.cause = error;
-      throw wrapped;
+    return response.data || null;
+  } catch (error) {
+    /*
+     * Safe idempotency check:
+     * The Pi SDK may retry the approval callback.
+     * If Pi accepted an earlier attempt, do not report
+     * a false failure when the current attempt fails.
+     */
+    try {
+      const latestPayment = await getPayment(paymentId);
+
+      if (paymentDeveloperApproved(latestPayment)) {
+        console.warn(
+          "[TESTNET LIQUIDITY APPROVE] Pi confirms payment already approved after retry."
+        );
+
+        return latestPayment;
+      }
+    } catch (_) {
+      // Keep the original approval failure for diagnostics.
     }
+
+    const details = safePiApiErrorDetails(error);
+    const wrapped = new Error("PI_APPROVE_FAILED");
+
+    wrapped.status =
+      details.upstreamStatus >= 400 &&
+      details.upstreamStatus < 600
+        ? details.upstreamStatus
+        : 502;
+
+    wrapped.piApiDiagnostics = details;
+    wrapped.cause = error;
+
+    throw wrapped;
+  }
   }
 
   async function completePayment(paymentId, txid) {
@@ -1222,14 +1293,13 @@ function validatePaymentDestination(payment) {
             ),
         });
       } catch (error) {
-        console.error(
-          "[TESTNET LIQUIDITY COMPLETE]",
-          error?.message || error
-        );
-        return sendError(
-          res,
-          error
-        );
+  console.error(
+    "[TESTNET LIQUIDITY APPROVE]",
+    error?.message || error,
+    error?.piApiDiagnostics || ""
+  );
+
+  return sendError(res, error);
       }
     }
   );
