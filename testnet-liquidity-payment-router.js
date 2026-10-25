@@ -970,6 +970,39 @@ function validatePaymentDestination(payment) {
     );
   }
 
+  async function completeAndVerifyPiPayment(
+  paymentIdentifier,
+  txid,
+  paymentBeforeCompletion
+) {
+  if (!paymentDeveloperCompleted(paymentBeforeCompletion)) {
+    await completePayment(paymentIdentifier, txid);
+  }
+
+  // Re-read the authoritative Pi Platform payment.
+  const latestPayment = await getPayment(paymentIdentifier);
+
+  if (!paymentDeveloperCompleted(latestPayment)) {
+    throw new Error("PI_PAYMENT_NOT_COMPLETED");
+  }
+
+  if (!transactionVerified(latestPayment)) {
+    throw new Error("PI_PAYMENT_TRANSACTION_NOT_VERIFIED");
+  }
+
+  const confirmedTxid = clean(
+    latestPayment?.transaction?.txid ||
+    latestPayment?.transaction?.tx_hash ||
+    latestPayment?.txid
+  );
+
+  if (!confirmedTxid || confirmedTxid !== clean(txid)) {
+    throw new Error("PI_PAYMENT_TXID_MISMATCH");
+  }
+
+  return latestPayment;
+  }
+  
   async function validateSessionAndPiIdentity(
     req
   ) {
