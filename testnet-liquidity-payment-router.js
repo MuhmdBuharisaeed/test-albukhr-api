@@ -1128,11 +1128,13 @@ function validatePaymentDestination(payment) {
           approval: approved,
           record,
         });
-      } catch (error) {
+            } catch (error) {
         console.error(
           "[TESTNET LIQUIDITY APPROVE]",
-          error?.message || error
+          error?.message || error,
+          error?.piApiDiagnostics || ""
         );
+
         return sendError(
           res,
           error
@@ -1294,7 +1296,7 @@ function validatePaymentDestination(payment) {
         });
       } catch (error) {
   console.error(
-    "[TESTNET LIQUIDITY APPROVE]",
+    "[TESTNET LIQUIDITY COMPLETE]",
     error?.message || error,
     error?.piApiDiagnostics || ""
   );
