@@ -1279,10 +1279,15 @@ function validatePaymentDestination(payment) {
             project.id
           );
 
-        const completed =
-          paymentDeveloperCompleted(
-            payment
-          )
+        const completedPayment =
+  await completeAndVerifyPiPayment(
+    paymentIdentifier,
+    txid,
+    payment
+  );
+
+const completed = completedPayment;
+        
             ? payment
             : await completePayment(
                 paymentIdentifier,
