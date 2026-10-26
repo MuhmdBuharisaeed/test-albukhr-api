@@ -8,6 +8,9 @@ const StellarSdk = require("stellar-sdk");
 const createTestnetLiquidityPaymentRouter =
   require("./testnet-liquidity-payment-router");
 
+const createTestnetStakingRouter =
+  require("./testnet-staking-router");
+
 const app = express();
 
 const PORT = Number(process.env.PORT || 8080);
@@ -142,6 +145,17 @@ app.use(
   })
 );
 
+/* Testnet-only staking and Pi payment verification. */
+app.use(
+  "/staking",
+  createTestnetStakingRouter({
+    supabase,
+    axios,
+    piApiKey: PI_API_KEY,
+    piTestnetAppWallet:
+      process.env.PI_TESTNET_APP_WALLET || ""
+  })
+);
 /* ============================================================
    UTILITIES
    ============================================================ */
