@@ -731,22 +731,25 @@ function createTestnetLiquidityPaymentRouter({
     return data;
   }
 
-  async function verifiedLiquidity(projectId) {
-    const { data, error } = await supabase
-      .from("project_liquidity_payments")
-      .select("amount")
-      .eq("project_id", projectId)
-      .eq("network", NETWORK)
-      .eq("verification_status", "verified")
-      .eq("pi_status", "completed");
+  
+async function verifiedLiquidity(projectId) {
+  const { data, error } = await supabase
+    .from("project_liquidity_payments")
+    .select("amount")
+    .eq("project_id", projectId)
+    .eq("network", NETWORK)
+    .eq("action", ACTION)
+    .eq("verification_status", "verified")
+    .eq("pi_status", "completed");
 
-    if (error) throw new Error("LIQUIDITY_READ_FAILED");
+  if (error) throw new Error("LIQUIDITY_READ_FAILED");
 
-    return (data || []).reduce(
-      (sum, row) => sum + Number(row.amount || 0),
-      0
-    );
-  }
+  return (data || []).reduce(
+    (sum, row) => sum + Number(row.amount || 0),
+    0
+  );
+}
+
 
   async function fundingState(projectId, treasury) {
     const verified = await verifiedLiquidity(projectId);
