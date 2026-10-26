@@ -744,13 +744,46 @@ async function verifiedLiquidity(projectId) {
 
   if (error) throw new Error("LIQUIDITY_READ_FAILED");
 
+  if (
+  data.action === ACTION &&
+  data.network === NETWORK &&
+  data.pi_status === "completed" &&
+  data.verification_status === "verified"
+) {
+  const { error: ledgerError } = await supabase
+    .from("project_staking_ledger")
+    .upsert({
+      network: NETWORK,
+      project_id: data.project_id,
+      bucket: "owner_liquidity",
+      movement: "credit",
+      event_type: "liquidity_verified",
+      amount: Number(data.amount),
+      source_type: "project_liquidity_payment",
+      source_id: data.payment_id,
+      idempotency_key: `liquidity:${data.payment_id}`,
+      metadata: {
+        payment_record_id: data.id,
+        verification_reference: data.verification_reference,
+        verified_at: data.verified_at,
+        network: NETWORK
+      }
+    }, {
+      onConflict: "idempotency_key",
+      ignoreDuplicates: true
+    });
+
+  if (ledgerError) {
+    throw new Error("STAKING_LIQUIDITY_LEDGER_SYNC_FAILED");
+  }
+  }
+  
   return (data || []).reduce(
     (sum, row) => sum + Number(row.amount || 0),
     0
   );
 }
-
-
+  
   async function fundingState(projectId, treasury) {
     const verified = await verifiedLiquidity(projectId);
     const required = Math.max(
