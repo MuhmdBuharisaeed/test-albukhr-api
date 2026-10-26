@@ -472,14 +472,29 @@ async function findTestnetPayoutByMemo(
   return null;
 }
 
+
 /* ============================================================
    MARK WITHDRAWAL COMPLETED
+   ------------------------------------------------------------
+   Uses the existing database RPC to settle the withdrawal
+   and update its ledger atomically.
+
+   TESTNET ONLY.
    ============================================================ */
 
 async function markWithdrawalCompleted(
   requestId,
   txid
 ) {
+  if (
+    !clean(requestId) ||
+    !clean(txid)
+  ) {
+    throw new Error(
+      "PAYOUT_RECORDED_FAILED:Missing request ID or transaction ID."
+    );
+  }
+
   const settlement = await supabase.rpc(
     "complete_testnet_withdrawal_and_ledger",
     {
@@ -498,40 +513,13 @@ async function markWithdrawalCompleted(
     ? settlement.data[0]
     : settlement.data;
 
-  return result || null;
-}
-
-{
-  const processedAt =
-    new Date().toISOString();
-
-  const update =
-    await supabase
-      .from("withdrawal_requests")
-      .update({
-        status: "completed",
-        txid,
-        reviewed_at:
-          processedAt
-      })
-      .eq("id", requestId)
-      .eq("network", "testnet")
-      .in("status", [
-        "processing",
-        "approved"
-      ])
-      .select(
-        "id,status,txid,requested_amount,fee_amount,net_amount,wallet_address"
-      )
-      .maybeSingle();
-
-  if (update.error) {
+  if (!result) {
     throw new Error(
-      `PAYOUT_RECORDED_FAILED:${update.error.message}`
+      "PAYOUT_RECORDED_FAILED:Database settlement returned no result."
     );
   }
 
-  return update.data;
+  return result;
 }
 
 /* ============================================================
