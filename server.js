@@ -480,6 +480,28 @@ async function markWithdrawalCompleted(
   requestId,
   txid
 ) {
+  const settlement = await supabase.rpc(
+    "complete_testnet_withdrawal_and_ledger",
+    {
+      p_request_id: requestId,
+      p_txid: txid
+    }
+  );
+
+  if (settlement.error) {
+    throw new Error(
+      `PAYOUT_RECORDED_FAILED:${settlement.error.message}`
+    );
+  }
+
+  const result = Array.isArray(settlement.data)
+    ? settlement.data[0]
+    : settlement.data;
+
+  return result || null;
+}
+
+{
   const processedAt =
     new Date().toISOString();
 
