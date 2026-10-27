@@ -993,10 +993,19 @@ async function verifiedLiquidity(projectId) {
       .maybeSingle();
 
     if (error || !data) {
-      throw new Error("LIQUIDITY_PAYMENT_UPSERT_FAILED");
-    }
+  throw new Error("LIQUIDITY_PAYMENT_UPSERT_FAILED");
+}
 
-    return data;
+if (
+  clean(data.network) === NETWORK &&
+  clean(data.action) === ACTION &&
+  clean(data.pi_status) === "completed" &&
+  clean(data.verification_status) === "verified"
+) {
+  await syncVerifiedLiquidityLedger(data.project_id);
+}
+
+return data;
   }
 
   async function validateAdminPaymentProject(payment, body) {
