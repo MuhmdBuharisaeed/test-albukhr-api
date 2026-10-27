@@ -90,6 +90,8 @@ function createTestnetLiquidityPaymentRouter({
       PI_PAYMENT_TRANSACTION_NOT_VERIFIED: 409,
       PI_PAYMENT_TXID_MISMATCH: 409,
 
+      PI_USER_SESSION_MISMATCH: 403,
+
       PROJECT_ID_REQUIRED: 400,
       PROJECT_CODE_REQUIRED: 400,
       PROJECT_READ_FAILED: 500,
@@ -290,12 +292,19 @@ function createTestnetLiquidityPaymentRouter({
   }
 
   async function validateSessionAndPiIdentity(req) {
-    const session = await getTestnetSession(req);
-    const piUser = await getPiUser(bearer(req));
+  const session = await getTestnetSession(req);
+  const piUser = await getPiUser(bearer(req));
 
-    return { session, piUser };
+  if (
+    !clean(session.pi_uid) ||
+    clean(session.pi_uid) !== clean(piUser.uid)
+  ) {
+    throw new Error("PI_USER_SESSION_MISMATCH");
   }
 
+  return { session, piUser };
+  }
+  
   async function validateAdminAndPiIdentity(req) {
     const adminSession = await getTestnetAdminSession(req);
     const piUser = await getPiUser(bearer(req));
