@@ -1387,7 +1387,17 @@ app.post(
 );
 
 /* ============================================================
-   ADMIN MANUAL PAYOUT
+   ADMIN MANUAL PAYOUT — ATOMIC TESTNET CLAIM
+   ------------------------------------------------------------
+   Replace the existing app.post("/pay-withdraw", ...) route in
+   test-albukhr-api/server.js with this complete route.
+
+   Safety behavior:
+   - Only an approved request can be newly claimed for payout.
+   - The DB update from approved -> processing is atomic.
+   - Only the request that successfully claims the row submits payout.
+   - An already-processing request is not paid again; reconcile it.
+   - All database reads/writes remain scoped to network=testnet.
    ============================================================ */
 
 app.post(
@@ -1395,10 +1405,7 @@ app.post(
   requireAdmin,
   async (req, res) => {
     try {
-      const requestId =
-        clean(
-          req.body?.requestId
-        );
+      const requestId = clean(req.body?.requestId);
 
       if (!requestId) {
         return jsonError(
@@ -1409,10 +1416,7 @@ app.post(
         );
       }
 
-      const requestRow =
-        await getWithdrawal(
-          requestId
-        );
+      const requestRow = await getWithdrawal(requestId);
 
       if (!requestRow) {
         return jsonError(
@@ -1423,100 +1427,130 @@ app.post(
         );
       }
 
-      if (
-        requestRow.status ===
-        "completed"
-      ) {
+      if (requestRow.status === "completed") {
         return res.json({
           success: true,
           network: "testnet",
-          payout:
-            "already_completed",
-
-          txid:
-            requestRow.txid,
-
-          request:
-            requestRow
+          payout: "already_completed",
+          txid: requestRow.txid,
+          request: requestRow
         });
       }
 
-      if (
-        ![
-          "approved",
-          "processing"
-        ].includes(
-          requestRow.status
-        )
-      ) {
+      if (requestRow.status !== "approved") {
+        if (requestRow.status === "processing") {
+          return jsonError(
+            res,
+            409,
+            "PAYOUT_ALREADY_CLAIMED",
+            "This withdrawal is already processing or has an uncertain payout outcome. Reconcile it before any retry."
+          );
+        }
+
         return jsonError(
           res,
           400,
           "REQUEST_NOT_PAYABLE",
-          "Withdrawal request must be approved or processing."
+          "Only an approved Testnet withdrawal can be claimed for a new manual payout."
         );
       }
 
-      const payout =
-        await submitTestnetWithdrawalPayout(
-          requestRow
+      // Atomic compare-and-set: among concurrent requests, only one can
+      // change this row from approved to processing and proceed to Horizon.
+      const claim = await supabase
+        .from("withdrawal_requests")
+        .update({
+          status: "processing",
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", requestId)
+        .eq("network", "testnet")
+        .eq("status", "approved")
+        .select(
+          "id,status,txid,requested_amount,fee_amount,net_amount,wallet_address,stake_id,project_id,project_code,withdrawal_type,pi_uid,created_at,updated_at"
+        )
+        .maybeSingle();
+
+      if (claim.error) {
+        console.error(
+          "[PAY WITHDRAW] atomic claim failed:",
+          claim.error.message
         );
 
+        return jsonError(
+          res,
+          500,
+          "PAYOUT_CLAIM_FAILED",
+          "The withdrawal could not be claimed safely. Reconcile the request before retrying."
+        );
+      }
+
+      if (!claim.data) {
+        // Another request may have claimed/completed it after our first read.
+        const latest = await getWithdrawal(requestId);
+
+        if (latest?.status === "completed") {
+          return res.json({
+            success: true,
+            network: "testnet",
+            payout: "already_completed",
+            txid: latest.txid,
+            request: latest
+          });
+        }
+
+        return jsonError(
+          res,
+          409,
+          "PAYOUT_ALREADY_CLAIMED",
+          "Another operation claimed this withdrawal. Reconcile it before retrying."
+        );
+      }
+
+      // Do not revert a claimed request automatically if payout outcome is
+      // uncertain. Horizon reconciliation must establish whether it was sent.
+      const payout = await submitTestnetWithdrawalPayout(claim.data);
+
       try {
-        const completed =
-          await markWithdrawalCompleted(
-            requestId,
-            payout.txid
-          );
+        const completed = await markWithdrawalCompleted(
+          requestId,
+          payout.txid
+        );
 
         return res.json({
           success: true,
           network: "testnet",
-          payout:
-            "completed",
-
-          reconciled:
-            !!payout.reconciled,
-
-          txid:
-            payout.txid,
-
-          request:
-            completed ||
-            requestRow
+          payout: "completed",
+          reconciled: !!payout.reconciled,
+          txid: payout.txid,
+          request: completed || claim.data
         });
-      } catch (
-        recordError
-      ) {
+      } catch (recordError) {
         console.error(
-          "[PAY WITHDRAW] DB update:",
+          "[PAY WITHDRAW] payout succeeded but DB settlement failed:",
           recordError
         );
 
-        return res
-          .status(502)
-          .json({
-            success: false,
-            error:
-              "PAYOUT_RECORDED_FAILED",
-            txid:
-              payout.txid,
-            request_id:
-              requestId
-          });
+        return res.status(502).json({
+          success: false,
+          error: "PAYOUT_RECORDED_FAILED",
+          network: "testnet",
+          message: "The Testnet payout may have succeeded, but database settlement failed. Reconcile before retrying.",
+          txid: payout.txid,
+          request_id: requestId
+        });
       }
     } catch (error) {
       console.error(
         "[PAY WITHDRAW]",
-        error?.stack ||
-          error
+        error?.stack || error
       );
 
       return jsonError(
         res,
         502,
         "TESTNET_PAYOUT_FAILED",
-        "Testnet withdrawal payout failed or could not be reconciled safely."
+        "Testnet payout failed or its outcome is uncertain. Reconcile before retrying."
       );
     }
   }
