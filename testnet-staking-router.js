@@ -181,6 +181,90 @@ STAKING_POLICY_PROVISION_FAILED:
     return data;
   }
 
+  async function getTestnetAdminSession(req) {
+  const token = adminSessionToken(req);
+
+  if (!token) {
+    throw new Error("TESTNET_ADMIN_SESSION_REQUIRED");
+  }
+
+  const { data, error } = await supabase
+    .from("testnet_admin_sessions")
+    .select(
+      "id,admin_user_id,email,roles,scoped_projects," +
+      "network,expires_at,revoked_at"
+    )
+    .eq("session_hash", hashToken(token))
+    .eq("network", NETWORK)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error("TESTNET_ADMIN_SESSION_LOOKUP_FAILED");
+  }
+
+  if (!data) {
+    throw new Error("TESTNET_ADMIN_SESSION_INVALID");
+  }
+
+  if (data.revoked_at) {
+    throw new Error("TESTNET_ADMIN_SESSION_REVOKED");
+  }
+
+  if (
+    !data.expires_at ||
+    new Date(data.expires_at).getTime() <= Date.now()
+  ) {
+    throw new Error("TESTNET_ADMIN_SESSION_EXPIRED");
+  }
+
+  const roles = Array.isArray(data.roles)
+    ? data.roles.map(clean)
+    : [];
+
+  if (
+    !roles.includes("super_admin") &&
+    !roles.includes("finance_admin")
+  ) {
+    throw new Error("TESTNET_ADMIN_ROLE_REQUIRED");
+  }
+
+  return { ...data, roles };
+}
+
+function assertAdminProjectScope(adminSession, project) {
+  if ((adminSession.roles || []).includes("super_admin")) {
+    return;
+  }
+
+  const scope = adminSession.scoped_projects;
+
+  if (!Array.isArray(scope) || scope.length === 0) {
+    throw new Error("STAKING_POLICY_PROJECT_SCOPE_REQUIRED");
+  }
+
+  const projectId = clean(project && project.id);
+  const projectCode = clean(project && project.project_code);
+
+  const allowed = scope.some((entry) => {
+    if (typeof entry === "string") {
+      return entry === projectId || entry === projectCode;
+    }
+
+    if (entry && typeof entry === "object") {
+      return (
+        clean(entry.project_id) === projectId ||
+        clean(entry.project_code) === projectCode
+      );
+    }
+
+    return false;
+  });
+
+  if (!allowed) {
+    throw new Error("STAKING_POLICY_PROJECT_SCOPE_REQUIRED");
+  }
+}
+
   async function getPiUser(accessToken) {
     const token = clean(accessToken);
     if (!token) throw new Error("PI_ACCESS_TOKEN_REQUIRED");
