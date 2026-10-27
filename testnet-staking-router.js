@@ -47,6 +47,10 @@ function createTestnetStakingRouter({
     return clean(req.get("x-testnet-session"));
   }
 
+  function adminSessionToken(req) {
+  return clean(req.get("x-testnet-admin-session"));
+  }
+
   function apiError(res, error) {
     const code = clean(error && error.message) || "TESTNET_STAKING_ERROR";
     const statuses = {
@@ -94,6 +98,17 @@ function createTestnetStakingRouter({
       STAKE_PAYMENT_RECORD_WRITE_FAILED: 500,
       PI_APPROVE_FAILED: 502,
       PI_COMPLETE_FAILED: 502,
+      TESTNET_ADMIN_SESSION_REQUIRED: 401,
+TESTNET_ADMIN_SESSION_INVALID: 401,
+TESTNET_ADMIN_SESSION_REVOKED: 401,
+TESTNET_ADMIN_SESSION_EXPIRED: 401,
+TESTNET_ADMIN_SESSION_LOOKUP_FAILED: 500,
+TESTNET_ADMIN_ROLE_REQUIRED: 403,
+STAKING_POLICY_SUPER_ADMIN_REQUIRED: 403,
+STAKING_POLICY_PROJECT_SCOPE_REQUIRED: 403,
+STAKING_POLICY_READ_FAILED: 500,
+STAKING_POLICY_ALREADY_EXISTS: 409,
+STAKING_POLICY_PROVISION_FAILED: 500,
     };
 
     const status = Number(error && error.status) || statuses[code] || 400;
@@ -124,6 +139,24 @@ function createTestnetStakingRouter({
       STAKING_REWARD_RATE_EXCEEDS_ALBUKHR_LIMIT: "The requested reward rate exceeds the maximum approved by ALBUKHR.",
       STAKING_DURATION_NOT_ALLOWED: "This staking duration is not in the ALBUKHR-approved duration list.",
       PROJECT_OWNER_ACCESS_DENIED: "Only the verified owner of this Testnet project can change its offers.",
+      TESTNET_ADMIN_SESSION_REQUIRED:
+  "A Testnet admin session is required.",
+TESTNET_ADMIN_SESSION_INVALID:
+  "The Testnet admin session is invalid.",
+TESTNET_ADMIN_SESSION_REVOKED:
+  "The Testnet admin session has been revoked.",
+TESTNET_ADMIN_SESSION_EXPIRED:
+  "The Testnet admin session has expired.",
+TESTNET_ADMIN_ROLE_REQUIRED:
+  "An authorized Testnet admin role is required.",
+STAKING_POLICY_SUPER_ADMIN_REQUIRED:
+  "Only a Testnet super admin can provision a staking policy.",
+STAKING_POLICY_PROJECT_SCOPE_REQUIRED:
+  "The admin session is not authorized for this project.",
+STAKING_POLICY_ALREADY_EXISTS:
+  "A staking policy record already exists; provisioning did not change it.",
+STAKING_POLICY_PROVISION_FAILED:
+  "The pending staking policy could not be provisioned.",
     };
     return messages[code] || code;
   }
