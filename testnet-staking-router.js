@@ -615,6 +615,167 @@ function assertAdminProjectScope(adminSession, project) {
     return reread.data;
   }
 
+  /*
+ * TESTNET ADMIN STAKING POLICY
+ *
+ * Provisioning creates a pending policy only.
+ * It never enables staking or approves risk limits.
+ */
+
+// Read the current Testnet policy.
+router.post("/admin/policy", async (req, res) => {
+  try {
+    const adminSession = await getTestnetAdminSession(req);
+
+    const project = await getApprovedProject(
+      req.body && req.body.projectId,
+      req.body && req.body.projectCode
+    );
+
+    assertAdminProjectScope(adminSession, project);
+
+    const { data, error } = await supabase
+      .from("project_staking_risk_controls")
+      .select(
+        "id,project_id,project_code,network,staking_enabled," +
+        "approval_status,minimum_liquidity,capital_reserve_percent," +
+        "maximum_deployment_percent,max_reward_rate," +
+        "max_active_principal,reward_reserve_coverage_percent," +
+        "created_at,updated_at"
+      )
+      .eq("project_id", project.id)
+      .eq("network", NETWORK)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error("STAKING_POLICY_READ_FAILED");
+    }
+
+    return res.json({
+      success: true,
+      network: NETWORK,
+      project: {
+        id: project.id,
+        project_code: project.project_code,
+        name: project.name
+      },
+      policy: data || null,
+      provisioning_required: !data,
+      can_provision:
+        (adminSession.roles || []).includes("super_admin") &&
+        !data
+    });
+  } catch (error) {
+    console.error(
+      "[TESTNET STAKING ADMIN POLICY READ]",
+      clean(error && error.message)
+    );
+
+    return apiError(res, error);
+  }
+});
+
+// Create a disabled, pending Testnet policy.
+router.post("/admin/policy/provision", async (req, res) => {
+  try {
+    const adminSession = await getTestnetAdminSession(req);
+
+    // Only a Testnet super admin may provision a policy.
+    if (!(adminSession.roles || []).includes("super_admin")) {
+      throw new Error("STAKING_POLICY_SUPER_ADMIN_REQUIRED");
+    }
+
+    const project = await getApprovedProject(
+      req.body && req.body.projectId,
+      req.body && req.body.projectCode
+    );
+
+    const { data: existing, error: existingError } =
+      await supabase
+        .from("project_staking_risk_controls")
+        .select("id,project_id,network")
+        .eq("project_id", project.id)
+        .eq("network", NETWORK)
+        .maybeSingle();
+
+    if (existingError) {
+      throw new Error("STAKING_POLICY_READ_FAILED");
+    }
+
+    if (existing) {
+      throw new Error("STAKING_POLICY_ALREADY_EXISTS");
+    }
+
+    const { data: policy, error: insertError } =
+      await supabase
+        .from("project_staking_risk_controls")
+        .insert({
+          project_id: project.id,
+          project_code: project.project_code,
+          network: NETWORK,
+          staking_enabled: false,
+          approval_status: "pending",
+          minimum_liquidity: 100,
+          reward_reserve_coverage_percent: 100
+          // Risk limits remain unset until formally reviewed.
+        })
+        .select(
+          "id,project_id,project_code,network,staking_enabled," +
+          "approval_status,minimum_liquidity,capital_reserve_percent," +
+          "maximum_deployment_percent,max_reward_rate," +
+          "max_active_principal,reward_reserve_coverage_percent," +
+          "created_at,updated_at"
+        )
+        .maybeSingle();
+
+    if (insertError || !policy) {
+      if (clean(insertError && insertError.code) === "23505") {
+        throw new Error("STAKING_POLICY_ALREADY_EXISTS");
+      }
+
+      console.error(
+        "[TESTNET STAKING POLICY PROVISION DB]",
+        clean(insertError && insertError.message)
+      );
+
+      throw new Error("STAKING_POLICY_PROVISION_FAILED");
+    }
+
+    console.info(
+      "[TESTNET STAKING POLICY PROVISION]",
+      JSON.stringify({
+        network: NETWORK,
+        project_id: project.id,
+        project_code: project.project_code,
+        actor_admin_user_id: adminSession.admin_user_id,
+        policy_id: policy.id,
+        approval_status: policy.approval_status,
+        staking_enabled: policy.staking_enabled
+      })
+    );
+
+    return res.status(201).json({
+      success: true,
+      network: NETWORK,
+      project: {
+        id: project.id,
+        project_code: project.project_code,
+        name: project.name
+      },
+      policy,
+      requires_manual_review: true,
+      staking_enabled: false
+    });
+  } catch (error) {
+    console.error(
+      "[TESTNET STAKING POLICY PROVISION]",
+      clean(error && error.message)
+    );
+
+    return apiError(res, error);
+  }
+});
+
   // Read-only project offer check. Client-provided identity is only a lookup;
   // all authorization and policy reads are revalidated by the database RPC.
   router.post("/offers", async (req, res) => {
