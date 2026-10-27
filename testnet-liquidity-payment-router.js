@@ -740,58 +740,127 @@ function createTestnetLiquidityPaymentRouter({
     return data;
   }
 
-  
-async function verifiedLiquidity(projectId) {
+  async function getVerifiedLiquidityPayments(projectId) {
   const { data, error } = await supabase
     .from("project_liquidity_payments")
-    .select("amount")
+    .select(
+      "id,payment_id,project_id,amount,network,action," +
+      "pi_status,verification_status,verification_reference," +
+      "verified_at"
+    )
     .eq("project_id", projectId)
     .eq("network", NETWORK)
     .eq("action", ACTION)
     .eq("verification_status", "verified")
     .eq("pi_status", "completed");
 
-  if (error) throw new Error("LIQUIDITY_READ_FAILED");
+  if (error) {
+    throw new Error("LIQUIDITY_READ_FAILED");
+  }
 
-  if (
-  data.action === ACTION &&
-  data.network === NETWORK &&
-  data.pi_status === "completed" &&
-  data.verification_status === "verified"
+  return Array.isArray(data) ? data : [];
+}
+
+async function syncVerifiedLiquidityLedger(
+  projectId,
+  payments = null
 ) {
-  const { error: ledgerError } = await supabase
-    .from("project_staking_ledger")
-    .upsert({
-      network: NETWORK,
-      project_id: data.project_id,
-      bucket: "owner_liquidity",
-      movement: "credit",
-      event_type: "liquidity_verified",
-      amount: Number(data.amount),
-      source_type: "project_liquidity_payment",
-      source_id: data.payment_id,
-      idempotency_key: `liquidity:${data.payment_id}`,
-      metadata: {
-        payment_record_id: data.id,
-        verification_reference: data.verification_reference,
-        verified_at: data.verified_at,
-        network: NETWORK
-      }
-    }, {
-      onConflict: "idempotency_key",
-      ignoreDuplicates: true
-    });
+  const rows = payments === null
+    ? await getVerifiedLiquidityPayments(projectId)
+    : payments;
 
-  if (ledgerError) {
-    throw new Error("STAKING_LIQUIDITY_LEDGER_SYNC_FAILED");
+  for (const payment of rows) {
+    const paymentRecordId = clean(payment.id);
+    const paymentIdentifier = clean(payment.payment_id);
+    const paymentProjectId = clean(payment.project_id);
+    const amount = numeric(payment.amount);
+
+    if (
+      !paymentRecordId ||
+      !paymentIdentifier ||
+      paymentProjectId !== clean(projectId) ||
+      clean(payment.network) !== NETWORK ||
+      clean(payment.action) !== ACTION ||
+      clean(payment.pi_status) !== "completed" ||
+      clean(payment.verification_status) !== "verified" ||
+      amount === null ||
+      amount <= 0
+    ) {
+      throw new Error("STAKING_LIQUIDITY_LEDGER_SYNC_FAILED");
+    }
+
+    const idempotencyKey = `liquidity:${paymentIdentifier}`;
+
+    const { error: ledgerWriteError } = await supabase
+      .from("project_staking_ledger")
+      .upsert(
+        {
+          network: NETWORK,
+          project_id: paymentProjectId,
+          bucket: "owner_liquidity",
+          movement: "credit",
+          event_type: "liquidity_verified",
+          amount,
+          source_type: "project_liquidity_payment",
+          source_id: paymentIdentifier,
+          idempotency_key: idempotencyKey,
+          metadata: {
+            payment_record_id: paymentRecordId,
+            verification_reference:
+              payment.verification_reference,
+            verified_at: payment.verified_at,
+            network: NETWORK
+          }
+        },
+        {
+          onConflict: "idempotency_key",
+          ignoreDuplicates: true
+        }
+      );
+
+    if (ledgerWriteError) {
+      throw new Error("STAKING_LIQUIDITY_LEDGER_SYNC_FAILED");
+    }
+
+    // Confirm that a ledger entry now exists and matches this payment.
+    const { data: ledger, error: ledgerReadError } = await supabase
+      .from("project_staking_ledger")
+      .select(
+        "network,project_id,bucket,movement,event_type," +
+        "amount,source_type,source_id,idempotency_key"
+      )
+      .eq("idempotency_key", idempotencyKey)
+      .maybeSingle();
+
+    if (
+      ledgerReadError ||
+      !ledger ||
+      clean(ledger.network) !== NETWORK ||
+      clean(ledger.project_id) !== paymentProjectId ||
+      clean(ledger.bucket) !== "owner_liquidity" ||
+      clean(ledger.movement) !== "credit" ||
+      clean(ledger.event_type) !== "liquidity_verified" ||
+      Number(ledger.amount) !== amount ||
+      clean(ledger.source_type) !== "project_liquidity_payment" ||
+      clean(ledger.source_id) !== paymentIdentifier
+    ) {
+      throw new Error("STAKING_LIQUIDITY_LEDGER_SYNC_FAILED");
+    }
   }
-  }
-  
-  return (data || []).reduce(
-    (sum, row) => sum + Number(row.amount || 0),
+
+  return rows;
+}
+
+async function verifiedLiquidity(projectId) {
+  const payments = await getVerifiedLiquidityPayments(projectId);
+
+  await syncVerifiedLiquidityLedger(projectId, payments);
+
+  return payments.reduce(
+    (sum, payment) => sum + Number(payment.amount || 0),
     0
   );
-}
+      }
   
   async function fundingState(projectId, treasury) {
     const verified = await verifiedLiquidity(projectId);
