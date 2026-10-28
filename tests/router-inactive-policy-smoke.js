@@ -5,7 +5,7 @@ Module._load = function (request, parent, isMain) {
   if (request === 'express') return { Router() { return { post(path, handler) { routes[path] = handler; } }; } };
   return originalLoad.call(this, request, parent, isMain);
 };
-const createRouter = require('../test-albukhr-api/testnet-outflow-fee-router.js');
+const createRouter = require('../testnet-outflow-fee-router.js');
 const session = {
   id: 'test-session', pi_uid: 'pi-user-1', username: 'test',
   wallet_address: 'GTESTWALLET', network: 'testnet',
