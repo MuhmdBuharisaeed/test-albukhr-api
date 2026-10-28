@@ -1,147 +1,247 @@
--- Testnet-only. Verify source eligibility before returning any prior assessment.
-CREATE OR REPLACE FUNCTION public.create_testnet_outflow_fee_assessment(
-  p_source_type text,
-  p_source_id uuid
+-- Applied Testnet-only forward correction.
+-- Corrects the project_operating ledger stake_id reference and keeps the
+-- owner-withdrawal RETURNING/row check adjacent to the owner-row UPDATE.
+-- This migration is safe to replay: it only replaces these two RPC bodies.
+
+CREATE OR REPLACE FUNCTION public.complete_testnet_withdrawal_and_ledger(
+  p_request_id uuid,
+  p_txid text
 )
-RETURNS public.testnet_outflow_fee_assessments
+RETURNS public.withdrawal_requests
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path TO 'public'
 AS $function$
 DECLARE
-  v_policy public.testnet_global_treasury_policy%ROWTYPE;
-  v_existing public.testnet_outflow_fee_assessments%ROWTYPE;
-  v_result public.testnet_outflow_fee_assessments%ROWTYPE;
-  v_actor_user_id uuid;
-  v_actor_pi_uid text;
-  v_project_id uuid;
-  v_requested numeric;
-  v_local_day date;
-  v_sub_tier_count integer := 0;
-  v_ordinal integer;
-  v_fee numeric := 0;
-  v_basis text;
-  v_fee_status text;
-  v_status text;
+  v_row public.withdrawal_requests%ROWTYPE;
+  v_stake public.stakes%ROWTYPE;
+  v_txid text := nullif(trim(coalesce(p_txid, '')), '');
+  v_gross numeric;
+  v_capital_balance numeric;
+  v_operating_balance numeric;
+  v_from_capital numeric;
+  v_from_operating numeric;
+  v_reward_balance numeric;
 BEGIN
-  IF p_source_type NOT IN ('staker_withdrawal', 'project_owner_withdrawal') OR p_source_id IS NULL THEN
-    RAISE EXCEPTION USING errcode = '22023', message = 'OUTFLOW_FEE_SOURCE_INVALID';
+  IF p_request_id IS NULL THEN
+    RAISE EXCEPTION USING errcode = '22023', message = 'WITHDRAWAL_ID_REQUIRED';
+  END IF;
+  IF v_txid IS NULL THEN
+    RAISE EXCEPTION USING errcode = '22023', message = 'WITHDRAWAL_TXID_REQUIRED';
+  END IF;
+
+  SELECT * INTO v_row
+  FROM public.withdrawal_requests
+  WHERE id = p_request_id AND network = 'testnet'
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING errcode = 'P0002', message = 'WITHDRAWAL_NOT_FOUND';
+  END IF;
+  IF v_row.status NOT IN ('completed', 'approved', 'processing') THEN
+    RAISE EXCEPTION USING errcode = '22023', message = 'WITHDRAWAL_NOT_READY_FOR_COMPLETION';
+  END IF;
+
+  PERFORM public.assert_testnet_outflow_fee_ready('staker_withdrawal', p_request_id);
+
+  SELECT * INTO v_stake
+  FROM public.stakes
+  WHERE id = v_row.stake_id AND network = 'testnet'
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING errcode = 'P0002', message = 'WITHDRAWAL_STAKE_NOT_FOUND';
   END IF;
 
   PERFORM pg_advisory_xact_lock(
-    hashtextextended('albukhr:testnet:outflow-fee:source:' || p_source_type || ':' || p_source_id::text, 0)
+    hashtextextended('albukhr:testnet:project-withdraw:' || v_stake.project_id::text, 0)
   );
 
-  IF p_source_type = 'staker_withdrawal' THEN
-    SELECT w.user_id, w.pi_uid, w.project_id, w.requested_amount, w.status
-      INTO v_actor_user_id, v_actor_pi_uid, v_project_id, v_requested, v_status
-    FROM public.withdrawal_requests w
-    WHERE w.id = p_source_id AND w.network = 'testnet';
+  v_gross := round(v_row.requested_amount, 7);
+
+  IF v_row.status = 'completed' THEN
+    IF EXISTS (
+      SELECT 1 FROM public.project_staking_ledger
+      WHERE idempotency_key IN (
+        'withdrawal:' || v_row.id::text || ':settlement',
+        'withdrawal:' || v_row.id::text || ':capital-reserve-settlement',
+        'withdrawal:' || v_row.id::text || ':project-operating-settlement'
+      )
+    ) THEN
+      UPDATE public.testnet_outflow_fee_assessments
+      SET payout_txid = coalesce(payout_txid, v_txid), updated_at = now()
+      WHERE source_type = 'staker_withdrawal' AND source_id = p_request_id
+        AND network = 'testnet';
+      RETURN v_row;
+    END IF;
+  END IF;
+
+  IF v_row.withdrawal_type = 'reward' THEN
+    SELECT coalesce(sum(CASE WHEN l.movement='credit' THEN l.amount ELSE -l.amount END), 0)
+      INTO v_reward_balance
+    FROM public.project_staking_ledger l
+    WHERE l.project_id = v_stake.project_id AND l.network = 'testnet'
+      AND l.bucket = 'reward_reserve';
+
+    IF v_reward_balance < v_gross THEN
+      RAISE EXCEPTION USING errcode = '22003', message = 'PROJECT_REWARD_RESERVE_INSUFFICIENT_AT_SETTLEMENT';
+    END IF;
+
+    INSERT INTO public.project_staking_ledger (
+      network, project_id, stake_id, withdrawal_request_id, bucket, movement,
+      event_type, amount, source_type, source_id, idempotency_key, metadata
+    ) VALUES (
+      'testnet', v_stake.project_id, v_stake.id, v_row.id, 'reward_reserve', 'debit',
+      'reward_paid', v_gross, 'withdrawal', v_row.id::text,
+      'withdrawal:' || v_row.id::text || ':settlement',
+      jsonb_build_object('txid', v_txid, 'requested_amount', v_row.requested_amount,
+        'fee_amount', 0, 'gross_deduction', v_gross, 'network', 'testnet')
+    ) ON CONFLICT (idempotency_key) DO NOTHING;
   ELSE
-    SELECT w.owner_user_id, u.pi_uid, w.project_id, w.requested_amount, w.status
-      INTO v_actor_user_id, v_actor_pi_uid, v_project_id, v_requested, v_status
-    FROM public.project_owner_withdrawals w
-    JOIN public.users u ON u.id = w.owner_user_id AND u.network = 'testnet'
-    WHERE w.id = p_source_id AND w.network = 'testnet';
+    SELECT coalesce(sum(CASE WHEN l.movement='credit' THEN l.amount ELSE -l.amount END)
+      FILTER (WHERE l.bucket='capital_reserve'), 0),
+      coalesce(sum(CASE WHEN l.movement='credit' THEN l.amount ELSE -l.amount END)
+      FILTER (WHERE l.bucket='project_operating'), 0)
+    INTO v_capital_balance, v_operating_balance
+    FROM public.project_staking_ledger l
+    WHERE l.project_id = v_stake.project_id AND l.network = 'testnet';
+
+    IF coalesce(v_capital_balance,0) + coalesce(v_operating_balance,0) < v_gross THEN
+      RAISE EXCEPTION USING errcode = '22003', message = 'PROJECT_CAPITAL_RESERVE_INSUFFICIENT_AT_SETTLEMENT';
+    END IF;
+
+    v_from_capital := least(greatest(coalesce(v_capital_balance,0),0), v_gross);
+    v_from_operating := v_gross - v_from_capital;
+
+    IF v_from_capital > 0 THEN
+      INSERT INTO public.project_staking_ledger (
+        network, project_id, stake_id, withdrawal_request_id, bucket, movement,
+        event_type, amount, source_type, source_id, idempotency_key, metadata
+      ) VALUES (
+        'testnet', v_stake.project_id, v_stake.id, v_row.id, 'capital_reserve', 'debit',
+        'capital_returned', v_from_capital, 'withdrawal', v_row.id::text,
+        'withdrawal:' || v_row.id::text || ':capital-reserve-settlement',
+        jsonb_build_object('txid', v_txid, 'network', 'testnet')
+      ) ON CONFLICT (idempotency_key) DO NOTHING;
+    END IF;
+
+    IF v_from_operating > 0 THEN
+      INSERT INTO public.project_staking_ledger (
+        network, project_id, stake_id, withdrawal_request_id, bucket, movement,
+        event_type, amount, source_type, source_id, idempotency_key, metadata
+      ) VALUES (
+        'testnet', v_stake.project_id, v_stake.id, v_row.id, 'project_operating', 'debit',
+        'capital_returned', v_from_operating, 'withdrawal', v_row.id::text,
+        'withdrawal:' || v_row.id::text || ':project-operating-settlement',
+        jsonb_build_object('txid', v_txid, 'network', 'testnet')
+      ) ON CONFLICT (idempotency_key) DO NOTHING;
+    END IF;
   END IF;
 
-  IF NOT FOUND OR v_actor_user_id IS NULL OR nullif(trim(coalesce(v_actor_pi_uid, '')), '') IS NULL THEN
-    RAISE EXCEPTION USING errcode = 'P0002', message = 'OUTFLOW_FEE_SOURCE_NOT_FOUND_OR_ACTOR_INVALID';
-  END IF;
+  UPDATE public.withdrawal_requests
+  SET status = 'completed',
+      fee_rate = 0,
+      fee_amount = 0,
+      net_amount = requested_amount,
+      txid = v_txid,
+      reviewed_at = coalesce(reviewed_at, now()),
+      updated_at = now()
+  WHERE id = p_request_id AND network = 'testnet'
+  RETURNING * INTO v_row;
 
-  IF (p_source_type = 'staker_withdrawal' AND v_status NOT IN ('pending', 'approved', 'processing'))
-     OR (p_source_type = 'project_owner_withdrawal' AND v_status NOT IN ('approved', 'processing')) THEN
-    RAISE EXCEPTION USING errcode = '22023', message = 'OUTFLOW_FEE_SOURCE_NOT_READY';
-  END IF;
-
-  SELECT * INTO v_existing
-  FROM public.testnet_outflow_fee_assessments
-  WHERE source_type = p_source_type AND source_id = p_source_id
+  UPDATE public.testnet_outflow_fee_assessments
+  SET payout_txid = v_txid, updated_at = now()
+  WHERE source_type = 'staker_withdrawal' AND source_id = p_request_id
     AND network = 'testnet';
 
-  IF FOUND THEN
-    IF v_existing.actor_user_id IS DISTINCT FROM v_actor_user_id
-       OR v_existing.actor_pi_uid IS DISTINCT FROM v_actor_pi_uid
-       OR round(v_existing.requested_amount, 7) IS DISTINCT FROM round(v_requested, 7) THEN
-      RAISE EXCEPTION USING errcode = '23514', message = 'OUTFLOW_FEE_EXISTING_ASSESSMENT_MISMATCH';
-    END IF;
-    RETURN v_existing;
-  END IF;
-
-  SELECT * INTO v_policy
-  FROM public.testnet_global_treasury_policy
-  WHERE singleton_id = 1 AND network = 'testnet'
-  FOR SHARE;
-
-  IF NOT FOUND OR v_policy.active IS DISTINCT FROM true THEN
-    RAISE EXCEPTION USING errcode = '55000', message = 'TESTNET_GLOBAL_TREASURY_POLICY_INACTIVE';
-  END IF;
-
-  IF v_requested IS NULL OR v_requested <= 0
-     OR v_requested::text IN ('NaN', 'Infinity', '-Infinity') THEN
-    RAISE EXCEPTION USING errcode = '22023', message = 'OUTFLOW_FEE_AMOUNT_INVALID';
-  END IF;
-
-  v_local_day := (now() AT TIME ZONE v_policy.business_day_timezone)::date;
-
-  PERFORM pg_advisory_xact_lock(
-    hashtextextended(
-      'albukhr:testnet:outflow-fee:actor:' || v_actor_user_id::text || ':' || v_local_day::text,
-      0
-    )
-  );
-
-  IF v_requested < v_policy.fee_tier_size THEN
-    SELECT count(*)::integer INTO v_sub_tier_count
-    FROM public.testnet_outflow_fee_assessments a
-    WHERE a.network = 'testnet'
-      AND a.actor_user_id = v_actor_user_id
-      AND a.local_day = v_local_day
-      AND a.requested_amount < v_policy.fee_tier_size;
-
-    v_ordinal := v_sub_tier_count + 1;
-    IF v_ordinal <= v_policy.sub_tier_fee_free_count THEN
-      v_fee := 0;
-      v_basis := 'no_fee_under_tier_daily_allowance';
-    ELSE
-      v_fee := round(v_policy.sub_tier_fee_after_quota, 7);
-      v_basis := 'under_tier_after_allowance';
-    END IF;
-  ELSE
-    v_ordinal := NULL;
-    v_fee := round(
-      floor(v_requested / v_policy.fee_tier_size) * v_policy.fee_per_tier,
-      7
-    );
-    v_basis := 'complete_tier_fee';
-  END IF;
-
-  v_fee_status := CASE WHEN v_fee > 0 THEN 'payment_pending' ELSE 'not_required' END;
-
-  INSERT INTO public.testnet_outflow_fee_assessments (
-    network, actor_user_id, actor_pi_uid, project_id, source_type, source_id,
-    local_day, sub_tier_ordinal, requested_amount, fee_amount, sender_total_debit,
-    recipient_amount, fee_policy_version, fee_basis, fee_status, idempotency_key,
-    metadata
-  )
-  VALUES (
-    'testnet', v_actor_user_id, v_actor_pi_uid, v_project_id, p_source_type, p_source_id,
-    v_local_day, CASE WHEN v_requested < v_policy.fee_tier_size THEN v_ordinal ELSE NULL END,
-    round(v_requested, 7), v_fee, round(v_requested + v_fee, 7),
-    round(v_requested, 7), v_policy.policy_version, v_basis, v_fee_status,
-    'testnet-outflow-fee:' || p_source_type || ':' || p_source_id::text,
-    jsonb_build_object(
-      'network', 'testnet',
-      'fee_policy_version', v_policy.policy_version,
-      'business_day_timezone', v_policy.business_day_timezone,
-      'fee_assessed_at', now()
-    )
-  )
-  RETURNING * INTO v_result;
-
-  RETURN v_result;
+  RETURN v_row;
 END;
 $function$;
 
-REVOKE ALL ON FUNCTION public.create_testnet_outflow_fee_assessment(text, uuid) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.create_testnet_outflow_fee_assessment(text, uuid) TO service_role;
+CREATE OR REPLACE FUNCTION public.complete_testnet_project_owner_withdrawal(
+  p_withdrawal_id uuid,
+  p_txid text,
+  p_reviewed_by uuid
+)
+RETURNS public.project_owner_withdrawals
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_row public.project_owner_withdrawals%ROWTYPE;
+  v_existing public.project_owner_ledger_entries%ROWTYPE;
+  v_txid text := nullif(trim(coalesce(p_txid, '')), '');
+BEGIN
+  IF v_txid IS NULL THEN
+    RAISE EXCEPTION USING errcode = '22023', message = 'OWNER_WITHDRAWAL_TXID_REQUIRED';
+  END IF;
+
+  SELECT * INTO v_row
+  FROM public.project_owner_withdrawals
+  WHERE id = p_withdrawal_id AND network = 'testnet'
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING errcode = 'P0002', message = 'OWNER_WITHDRAWAL_NOT_FOUND';
+  END IF;
+  IF v_row.status = 'completed' THEN
+    RETURN v_row;
+  END IF;
+  IF v_row.status NOT IN ('approved', 'processing') THEN
+    RAISE EXCEPTION USING errcode = '22023', message = 'OWNER_WITHDRAWAL_NOT_READY';
+  END IF;
+
+  PERFORM public.assert_testnet_outflow_fee_ready('project_owner_withdrawal', p_withdrawal_id);
+
+  INSERT INTO public.project_owner_ledger_entries (
+    project_id, owner_user_id, network, entry_type, amount, source_type,
+    source_reference, description, metadata
+  )
+  VALUES (
+    v_row.project_id, v_row.owner_user_id, 'testnet', 'debit',
+    v_row.requested_amount, 'owner_withdrawal', v_row.id::text,
+    'Project Owner withdrawal',
+    jsonb_build_object(
+      'withdrawal_id', v_row.id,
+      'txid', v_txid,
+      'net_amount', v_row.requested_amount,
+      'fee_amount', 0,
+      'network', 'testnet',
+      'fee_paid_separately', true
+    )
+  )
+  ON CONFLICT (source_type, source_reference)
+  WHERE source_reference IS NOT NULL
+  DO NOTHING
+  RETURNING * INTO v_existing;
+
+  UPDATE public.project_owner_withdrawals
+  SET status = 'completed',
+      fee_rate = 0,
+      fee_amount = 0,
+      net_amount = requested_amount,
+      txid = v_txid,
+      reviewed_by = coalesce(p_reviewed_by, reviewed_by),
+      reviewed_at = coalesce(reviewed_at, now()),
+      updated_at = now()
+  WHERE id = p_withdrawal_id AND network = 'testnet'
+  RETURNING * INTO v_row;
+
+  IF v_row.id IS NULL THEN
+    RAISE EXCEPTION USING errcode = 'P0002', message = 'OWNER_WITHDRAWAL_COMPLETION_FAILED';
+  END IF;
+
+  UPDATE public.testnet_outflow_fee_assessments
+  SET payout_txid = v_txid, updated_at = now()
+  WHERE source_type = 'project_owner_withdrawal' AND source_id = p_withdrawal_id
+    AND network = 'testnet';
+
+  RETURN v_row;
+END;
+$function$;
+
+REVOKE ALL ON FUNCTION public.complete_testnet_withdrawal_and_ledger(uuid, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.complete_testnet_project_owner_withdrawal(uuid, text, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.complete_testnet_withdrawal_and_ledger(uuid, text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.complete_testnet_project_owner_withdrawal(uuid, text, uuid) TO service_role;
