@@ -1,0 +1,129 @@
+02 — Migration and API implementation plan
+A. Policy values to encode
+New staking agreement durations
+Allow new agreements only at 30, 90, 180, 365, 730, and 1095 days. Keep any already accepted agreements immutable. A 60-day term may be disabled for new offers, but never delete or rewrite a historical stake, its accepted duration, reward, or unlock_at.
+Rewards and principal
+The project owner proposes the reward for each duration.
+The staker must see and accept the principal, duration, exact reward, maturity date, fee, and risk wording before confirming.
+A reward that is immediately withdrawable at staking confirmation must be fully funded/reserved. The new stake must fail if the full immediately withdrawable reward cannot be reserved.
+Principal remains locked until the accepted maturity date.
+Do not claim future project revenue, assets in construction, pending payments, or unverified liquidity is cash currently available.
+At maturity, validate due obligations and reconciled funds before paying principal.
+Dynamic liquidity coverage
+100 PI is the minimum baseline for each project, not a cap and not automatic staking approval.
+Separate project account partitions are required under one ALBUKHR-controlled Treasury framework. No cross-project use of another project's funds.
+Require full coverage for the reward amount immediately withdrawable under a new agreement.
+Principal reserve/deployment percentages are risk/stage policy settings. They must be approved for setup/pre-operation, construction/fit-out, and operating/expansion projects; do not hardcode an arbitrary common percentage.
+Check the coverage formula before a new stake, a reward payout, a maturity/principal payout, or an owner capital release.
+Owner capital release requires purpose, stage-appropriate evidence, remaining-liability check, post-release coverage, and maker-checker approval (requester and approver must be different).
+The coverage function should compute the dynamic target from verified/reconciled assets, unpaid principal liabilities, immediately withdrawable rewards, other due liabilities, reserved/pending outflows, and approved risk buffer, while avoiding double counting.
+Fee formula approved in conversation
+Use a fixed fee per 5 PI tier:
+If requested amount is at least 5 PI: floor(requested_amount / 5 PI) * 0.01 PI.
+If requested amount is below 5 PI: the first three qualifying withdrawals per user per Africa/Lagos calendar day are fee-free; the fourth and later sub-5 PI withdrawals that day incur a flat 0.01 PI fee.
+Minimum reward/principal withdrawal: 0.50 PI.
+Incoming payments are fee-exempt.
+The initiator pays the fee separately; the recipient receives the full requested amount.
+Owner capital withdrawal is charged to the owner/initiator, not the project reward/principal reserve.
+Only user-initiated outflows are assessed once. Do not assess a second fee just because the backend later settles the already-assessed payout.
+Persist the policy version and the exact fee quote before requesting payment. Never trust a fee amount sent by the browser.
+Examples:
+Requested amount
+Daily sub-5 position
+Fee
+Recipient amount
+0.5–4.999 PI
+first, second, or third
+0 PI
+full requested amount
+0.5–4.999 PI
+fourth or later
+0.01 PI
+full requested amount
+5–9.999 PI
+any
+0.01 PI
+full requested amount
+10–14.999 PI
+any
+0.02 PI
+full requested amount
+100 PI
+any
+0.20 PI
+100 PI
+Daily counting must be account-wide across staker and owner outflows, not reset per project. Recommended day boundary is Africa/Lagos; record that timezone in policy so this cannot vary between frontend and server.
+B. Important fee-collection architecture gate
+The current Testnet /withdraw flow pays the recipient from ALBUKHR's Testnet payout wallet. It does not currently take a separate fee payment from the user's Pi wallet before paying the recipient. SQL-side arithmetic cannot honestly say the initiator paid the fee if there is no verified user-funded payment or explicit user-owned spendable balance.
+Recommended flow when the fee is non-zero:
+The client requests a server-generated withdrawal quote and sees recipient amount, fee, and total the initiator must pay.
+The backend creates a withdrawal request and a unique fee assessment tied to that request.
+The client pays the exact fee through the Pi SDK User-to-App payment flow.
+The backend validates the payment ID, user identity, exact amount, metadata/withdrawal reference, Testnet environment, and successful server-side completion. A browser callback alone is not proof of payment.
+Only after the fee payment is confirmed does the backend initiate the App-to-User payout for the full requested amount.
+The payout is reconciled by the existing deterministic memo/transaction mechanism.
+The fee is credited to the platform fee ledger only after confirmed fee payment. Project reward/principal reserves are debited only for the payout amount owed to the recipient, not for the user's fee.
+If fee is zero, skip the fee-payment step and continue through the same idempotent payout/reconciliation path. If fee payment is pending/failed/cancelled, do not issue the payout. If payout fails after fee payment was confirmed, keep the request in a recoverable pending state and reconcile/retry; do not collect a second fee. Refund/reversal behavior for a permanently abandoned payout needs a recorded policy and auditable payment path.
+For owner capital withdrawals, make the fee-payment step happen after ALBUKHR has approved the owner request and before payout, so an owner is not charged for a request that is rejected. Never let fee payment replace stage evidence, independent review, or the post-release coverage check.
+C. SQL migration phases
+Phase 0 — freeze and confirm baseline
+Save a schema/function snapshot for the Testnet project.
+Confirm current migration head and record current RLS/grants.
+Keep project wallet configuration and verified liquidity unchanged.
+Do not alter historical stakes or payment state.
+The SQL draft in this ZIP is additive and inactive; it is not the full migration.
+Phase 1 — additive schema
+Use 03_DRAFT_ADDITIVE_SCHEMA.sql as a review draft for:
+A singleton Testnet policy row containing the global liquidity floor, durations, tier-fee parameters, minimum withdrawal, and daily timezone. Policy is seeded inactive.
+A shared fee-assessment table storing initiator, source withdrawal, per-user Lagos day, small-withdrawal ordinal, amount, fee, total sender debit, full recipient amount, policy version, fee payment reference/status, payout txid, and idempotency.
+A platform-level fee ledger recording confirmed fee revenue/refunds without assigning the fee to a project's reward reserve.
+RLS enabled and no direct anon/authenticated access to these new tables. Only trusted service-role/backend flows should read/write them.
+This schema draft intentionally does not replace existing RPCs. Do not apply it alone and assume the feature is implemented.
+Phase 2 — atomic database RPC integration
+Patch and test these existing functions in a follow-up migration:
+create_testnet_withdrawal: enforce 0.50 PI minimum for both reward and principal; enforce maturity lock for principal; use server-side fee policy; create an idempotent fee assessment; reserve only the reward/principal amount owed to the recipient; do not deduct the fee from project reserves.
+complete_testnet_withdrawal_and_ledger: require fee assessment to be paid or not-required; debit project reserves by requested amount only; record the user-paid fee in the platform-level fee ledger only after the fee payment is reconciled; remain idempotent.
+create_testnet_project_owner_withdrawal: remove percentage/net = requested - fee interpretation; recipient amount remains the requested amount; require the owner fee assessment/payment path before payout; preserve owner identity/project approval checks.
+complete_testnet_project_owner_withdrawal: require approved state, verified fee status when applicable, and final payout txid; record the recipient payout at the full requested amount and record platform fee separately.
+get_testnet_staking_coverage: implement the approved dynamic formula and ensure immediate rewards are 100% funded before stake confirmation. Keep stage/risk reserve percentages configurable and approved, not hardcoded.
+create_testnet_stake_intent / finalize_testnet_stake_intent: ensure the allowed-duration check is on the server side and full reward reserve is confirmed before finalizing the commitment.
+update_testnet_project_staking_offer: allow only the six configured durations; keep accepted stake terms immutable.
+Add/adjust idempotency constraints and audit fields before exposing new endpoints.
+Every SECURITY DEFINER function must use a fixed safe search_path, explicit authorization, and narrowly limited EXECUTE grants. Preserve RLS. Do not add public direct treasury-write policies.
+Phase 3 — Testnet API and Edge Function integration
+test-albukhr-api/server.js
+Add server-side fee quote/assessment handling to the existing /withdraw flow.
+Add fee-payment approve and complete handlers tied to one withdrawal assessment.
+Do not send the App-to-User payout until the fee is confirmed (unless the fee is zero).
+Continue sending the full requested amount (net_amount = requested_amount) and retain deterministic memo reconciliation.
+Do not trust fee/total fields supplied by the client.
+test-albukhr-api/testnet-staking-router.js
+Enforce duration and coverage policy in offer/intent flows.
+Keep policy provisioning separate from ALBUKHR approval/enablement; no auto-enable behavior.
+Make the endpoint response show whether a project is eligible and why it is blocked.
+Supabase Edge Function testnet-project-owner
+Remove the hardcoded p_fee_rate: 0 after the shared fee policy is ready.
+Return the owner withdrawal's fee quote and state; do not calculate a fee from client values.
+Supabase Edge Function testnet-project-owner-admin
+Tie owner fee collection to the approved withdrawal request and existing admin approval workflow.
+Require the fee to be confirmed before outgoing payout completion.
+Preserve separation between requester and approver.
+test-albukhr-app/investor.html and the related withdrawal script
+The page currently states Testnet withdrawals are disabled. Keep them disabled until backend and payment tests pass.
+Then show: recipient amount, fee, total wallet amount required, and a final confirmation before invoking Pi SDK.
+Include safe handling of cancellation, incomplete Pi payments, server approval/completion errors, and retries.
+Do not modify ALBUKHR Dock Navigation.
+Owner-facing Testnet UI
+Show the fee/recipient breakdown and separate payment flow after owner withdrawal approval.
+Display Testnet-only notice: simulated approval is not real-business verification or Mainnet approval.
+D. Release gates
+Do not turn on the policy until:
+The additive schema and follow-up RPC migration pass in an isolated Testnet test environment.
+The staker fee and owner fee are demonstrably paid by the initiating user, not silently deducted from project funds.
+The recipient receives the exact requested amount.
+All project reserves and platform fee ledger records reconcile to the verified transactions.
+No two requests can reuse one fee payment or one payout.
+Coverage/approval locks are checked inside the database transaction.
+Mainnet reads/writes are proven absent in logs/tests.
+Supabase security advisors and RLS/grant review pass.
+Only then may the Testnet feature be activated by an explicit ALBUKHR administrator action.
