@@ -1,0 +1,16 @@
+ALBUKHR Testnet Global Treasury — SQL & API Implementation Plan
+Package status: Draft for review only. It has not been applied to Supabase, pushed to GitHub, deployed to Render, or deployed as a Supabase Edge Function.
+Scope
+Testnet only: Supabase project vhvkwvngmrlgyzwemttt.
+Testnet API repository: MuhmdBuharisaeed/test-albukhr-api.
+Testnet frontend repository: MuhmdBuharisaeed/test-albukhr-app.
+No Mainnet code, data, keys, API, configuration, payment state, or deployment changes.
+Files
+01_READ_ONLY_AUDIT.md — findings from read-only inspection.
+02_MIGRATION_AND_API_PLAN.md — staged implementation plan and exact integration targets.
+03_DRAFT_ADDITIVE_SCHEMA.sql — additive schema draft only; not the complete migration and must not be applied by itself.
+04_TEST_AND_ROLLBACK_PLAN.md — test cases, release gates, and rollback strategy.
+05_REFERENCES.md — official Pi Network and Supabase references.
+Critical release gate
+The existing payout flow sends from ALBUKHR's Testnet app wallet to the recipient. The current SQL also charges fee amounts against project reward/capital reserves. This does not implement the approved rule that the person requesting a withdrawal pays a separate fee while the recipient receives the full requested amount. The plan therefore requires a separately authorized and server-verified Pi payment for the fee before the payout (unless the architecture team proves an equivalent user-funded balance mechanism exists). Do not enable withdrawals until this entire flow is verified end-to-end.
+The additive SQL draft creates the future policy/assessment tables with the policy inactive. It does not patch current RPCs or enable features. It is not a production-ready or complete migration.
