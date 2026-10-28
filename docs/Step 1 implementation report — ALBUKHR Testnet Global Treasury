@@ -1,0 +1,32 @@
+Step 1 implementation report — ALBUKHR Testnet Global Treasury
+Supabase changes completed
+Applied migration 20261028153409_testnet_global_treasury_fee_assessment_foundation_v1 to Testnet project vhvkwvngmrlgyzwemttt only.
+Created:
+public.testnet_global_treasury_policy
+public.testnet_outflow_fee_assessments
+public.testnet_platform_fee_ledger
+Verification:
+All three tables exist and have RLS enabled.
+The policy row is present with active=false.
+Approved durations are [30, 90, 180, 365, 730, 1095].
+Minimum liquidity floor is 100 PI; minimum staker withdrawal is 0.5 PI.
+Africa/Lagos is the proposed business-day boundary for the daily fee allowance.
+Direct anon and authenticated table privileges were revoked; service_role privileges were granted.
+Supabase migration history records version 20261028153409.
+GitHub status
+Attempted to create branch feat/testnet-global-treasury-foundation in MuhmdBuharisaeed/test-albukhr-api. GitHub integration returned HTTP 403 Resource not accessible by integration. No repository file was changed, no commit was created, and no PR was opened.
+Target migration path for the repository: supabase/migrations/20261028153409_testnet_global_treasury_fee_assessment_foundation_v1.sql
+The matching SQL file is included in this ZIP so it can be added once GitHub write access is available.
+Render status
+Service: test-albukhr-api (srv-d85hgiek1jcs73fma40g).
+autoDeploy=no / trigger off. Left unchanged.
+Render log query for 2026-10-28 15:30–16:35 UTC returned no entries.
+Render collects available logs automatically; no separate “auto logs” toggle was exposed by the inspected service configuration. If “auto logs” meant automatic deployments, that is distinct and remains off to avoid deploying unreviewed code.
+Not done
+Existing withdrawal/staking RPCs and API files have not yet been changed.
+No fee payment or payout was sent.
+No historical stake, payment, or ledger record was changed.
+No Mainnet code, data, API, or configuration was touched.
+Staking and withdrawals were not enabled.
+Next
+Implement a server-generated fee quote, fee payment via Pi User-to-App flow, server-side payment confirmation, and only then the existing App-to-User payout for the full requested amount. Update existing settlement RPCs to debit project reserves by the recipient amount only and record the confirmed fee separately. Keep the policy inactive until full Testnet integration tests pass.
