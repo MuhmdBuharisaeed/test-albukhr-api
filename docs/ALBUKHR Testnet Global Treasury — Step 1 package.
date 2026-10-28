@@ -1,0 +1,7 @@
+ALBUKHR Testnet Global Treasury — Step 1 package.
+
+Contains the applied Testnet SQL migration and the implementation report.
+Intended repository path:
+supabase/migrations/20261028153409_testnet_global_treasury_fee_assessment_foundation_v1.sql
+
+The policy remains inactive. This migration alone does not implement or enable fee payment, staking, or withdrawals.
