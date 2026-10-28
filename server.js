@@ -5,11 +5,11 @@ const crypto = require("crypto");
 const { createClient } = require("@supabase/supabase-js");
 const StellarSdk = require("stellar-sdk");
 
-const createTestnetLiquidityPaymentRouter =
-  require("./testnet-liquidity-payment-router");
-
 const createTestnetStakingRouter =
   require("./testnet-staking-router");
+
+const createTestnetOutflowFeeRouter =
+  require("./testnet-outflow-fee-router");
 
 const app = express();
 
