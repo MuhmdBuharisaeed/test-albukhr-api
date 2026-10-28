@@ -1,0 +1,52 @@
+04 — Test plan, release gates, and rollback
+Fee calculation tests
+5 PI → 0.01 PI fee; recipient gets 5 PI.
+7 PI → 0.01 PI fee; recipient gets 7 PI.
+10 PI → 0.02 PI fee; recipient gets 10 PI.
+50 PI → 0.10 PI fee; recipient gets 50 PI.
+100 PI → 0.20 PI fee; recipient gets 100 PI.
+First three withdrawals below 5 PI in one Africa/Lagos day → no fee.
+Fourth and later withdrawals below 5 PI in that day → 0.01 PI each.
+On the new Africa/Lagos day, the sub-5 allowance resets correctly.
+Concurrent requests from the same account cannot both claim the same free ordinal.
+An idempotent retry returns the same assessment and never creates a second fee charge.
+Payment and accounting tests
+Non-zero fee: the initiator pays the exact fee in Pi U2A flow.
+A user-reported callback without successful server-side /complete does not count as paid.
+Fee payment with wrong UID, wrong amount, wrong network, wrong metadata/assessment ID, or reused payment ID is rejected.
+Fee-free withdrawal skips fee payment but follows normal authorization/reconciliation.
+A2U payout never starts before required fee confirmation.
+Recipient receives the exact requested amount; the fee is not deducted from net_amount.
+Project reward reserve is debited by the reward amount actually paid, not reward amount + user fee.
+Matured principal reserve is debited by principal actually paid, not principal + user fee.
+Platform fee ledger records the fee only after confirmation; any refund/reversal is separately idempotent.
+Payout and fee payment can be reconciled after a server interruption without duplicate payout or duplicate fee collection.
+If fee is paid but payout fails, request is recoverable and is not charged twice.
+Staking and liquidity tests
+New duration choices accepted: 30, 90, 180, 365, 730, 1095.
+Unsupported duration 60 cannot be selected for a new offer after policy rollout.
+Existing accepted 60-day agreements remain unchanged and mature against their saved terms.
+A stake is blocked if its full immediately withdrawable reward cannot be reserved.
+Principal cannot be withdrawn before unlock_at.
+Both reward and principal withdrawals below 0.5 PI are rejected by the database/API.
+Minimum project baseline of 100 PI is enforced; higher dynamic required liquidity is enforced when liabilities demand it.
+Project setup, construction, and operating-stage owner releases apply their approved stage risk settings.
+Owner withdrawal is rejected if evidence/approval is missing, requester=approver, or post-release coverage fails.
+One project's liquidity cannot cover another project's liabilities.
+Pending/unverified incoming payments do not count as verified liquidity.
+Missing project_treasury rows are not created without explicit project/wallet configuration and reconciliation.
+Security and environment tests
+Every new table has RLS enabled and no direct anon/authenticated write access.
+Sensitive RPCs have fixed search_path, strict authorization, and narrowly limited EXECUTE grants.
+All financial queries constrain network='testnet'.
+Testnet tests make no Mainnet reads/writes and do not touch Mainnet services or secrets.
+Idempotency keys prevent duplicate accounting entries.
+Supabase security/performance advisors are reviewed after migration.
+Frontend only enables withdrawals after end-to-end tests pass.
+Rollback plan
+Keep the new policy row inactive until all API and UI work is deployed and verified in Testnet.
+If a release fails before enabling: stop at the feature flag, do not enable staking/withdrawals. The additive policy/assessment tables can remain unused or be removed only through a reviewed rollback migration.
+If fee-payment or payout reconciliation fails: disable new withdrawal requests immediately; do not delete pending requests or transaction IDs. Reconcile them using Pi payment state and deterministic payout memo.
+If coverage calculations are inconsistent: disable new stakes and owner capital releases; preserve existing accepted stake terms and allow only safe, reconciled settlement of already-due liabilities.
+Never roll back by deleting ledger records or rewriting transaction history.
+No Mainnet rollback is required because Mainnet is not in scope.
