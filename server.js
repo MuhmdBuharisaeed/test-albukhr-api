@@ -1110,6 +1110,17 @@ app.post(
   requireSession,
   async (req, res) => {
     try {
+
+            // SAFETY LOCK: Keep Testnet withdrawals disabled until
+      // the separate U2A fee-payment flow is fully verified.
+      return res.status(423).json({
+        success: false,
+        network: "testnet",
+        error: "TESTNET_WITHDRAWALS_LOCKED",
+        message:
+          "Testnet withdrawals remain locked until fee payment verification, payout preflight, and idempotent reconciliation have passed end-to-end tests."
+      });
+
       const piUid =
         clean(
           req.testnetSession
