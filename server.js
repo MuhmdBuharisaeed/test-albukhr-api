@@ -156,6 +156,21 @@ app.use(
       process.env.PI_TESTNET_APP_WALLET || ""
   })
 );
+
+/* Testnet-only Global Treasury outflow fee flow. */
+app.use(
+  "/outflow-fee",
+  createTestnetOutflowFeeRouter({
+    supabase,
+    axios,
+    piApiKey: PI_API_KEY,
+    piTestnetAppWallet:
+      process.env.PI_TESTNET_APP_WALLET || "",
+    submitTestnetWithdrawalPayout,
+    markWithdrawalCompleted
+  })
+);
+
 /* ============================================================
    UTILITIES
    ============================================================ */
