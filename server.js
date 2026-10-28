@@ -1480,6 +1480,40 @@ app.post(
           "Only an approved Testnet withdrawal can be claimed for a new manual payout."
         );
       }
+      // Global Treasury fee preflight MUST run before claiming or sending a payout.
+      const feeCheck = await supabase.rpc(
+        "assert_testnet_outflow_fee_ready",
+        {
+          p_source_type: "staker_withdrawal",
+          p_source_id: requestId
+        }
+      );
+
+      const feeAssessment = Array.isArray(feeCheck.data)
+        ? feeCheck.data[0]
+        : feeCheck.data;
+
+      if (
+        feeCheck.error ||
+        !feeAssessment ||
+        (
+          Number(feeAssessment.fee_amount) > 0 &&
+          feeAssessment.fee_status !== "paid"
+        )
+      ) {
+        console.warn(
+          "[PAY WITHDRAW] blocked by Global Treasury fee preflight",
+          requestId,
+          feeCheck.error ? feeCheck.error.message : "fee not confirmed"
+        );
+
+        return jsonError(
+          res,
+          409,
+          "OUTFLOW_FEE_PAYMENT_REQUIRED",
+          "A valid fee assessment and confirmed fee payment (or an approved zero-fee assessment) are required before a Testnet payout."
+        );
+      }
 
       // Atomic compare-and-set: among concurrent requests, only one can
       // change this row from approved to processing and proceed to Horizon.
