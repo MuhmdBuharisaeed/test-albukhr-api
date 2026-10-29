@@ -491,7 +491,7 @@ async function assertOwnerOutflowFeeReady(withdrawalId) {
 
   const assessment = Array.isArray(data) ? data[0] : data;
 
-    if (error || !assessment) {
+  if (error || !assessment) {
     const reason = clean(error && error.message);
 
     const code = reason.includes("TESTNET_GLOBAL_TREASURY_POLICY_INACTIVE")
@@ -501,16 +501,9 @@ async function assertOwnerOutflowFeeReady(withdrawalId) {
         : "FEE_ASSESSMENT_REQUIRED";
 
     const wrapped = new Error(code);
-
     wrapped.status =
-      code === "TESTNET_GLOBAL_TREASURY_POLICY_INACTIVE"
-        ? 423
-        : 409;
+      code === "TESTNET_GLOBAL_TREASURY_POLICY_INACTIVE" ? 423 : 409;
 
-    throw wrapped;
-    }
-
-    wrapped.status = 409;
     throw wrapped;
   }
 
