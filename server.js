@@ -646,6 +646,7 @@ async function markWithdrawalCompleted(
   return result;
 }
 
+
 async function markOwnerWithdrawalCompleted(requestId, txid) {
   if (!clean(requestId) || !clean(txid)) {
     throw new Error(
@@ -653,6 +654,74 @@ async function markOwnerWithdrawalCompleted(requestId, txid) {
     );
   }
 
+  // Sake karanta ainihin withdrawal daga Testnet database.
+  const { data: withdrawal, error: readError } = await supabase
+    .from("project_owner_withdrawals")
+    .select("id,network,wallet_address,requested_amount,status,txid")
+    .eq("id", requestId)
+    .eq("network", "testnet")
+    .maybeSingle();
+
+  if (readError) {
+    throw new Error("OWNER_WITHDRAWAL_READ_FAILED");
+  }
+
+  if (!withdrawal) {
+    throw new Error("OWNER_WITHDRAWAL_NOT_FOUND");
+  }
+
+  if (
+    !["processing", "completed"].includes(
+      clean(withdrawal.status)
+    )
+  ) {
+    throw new Error("OWNER_WITHDRAWAL_NOT_PROCESSING");
+  }
+
+  const expectedAmount = numeric(withdrawal.requested_amount);
+
+  if (
+    !clean(withdrawal.wallet_address) ||
+    expectedAmount === null ||
+    expectedAmount <= 0
+  ) {
+    throw new Error("OWNER_PAYOUT_EXPECTED_DETAILS_INVALID");
+  }
+
+  // Tabbatar da ainihin payout a Pi Testnet Horizon.
+  const sourcePublicKey = payoutWalletKeypair().publicKey();
+  const memoText = withdrawalMemo(requestId);
+
+  const verifiedPayout = await findTestnetPayoutByMemo(
+    sourcePublicKey,
+    memoText,
+    {
+      wallet_address: withdrawal.wallet_address,
+      amount: expectedAmount,
+    }
+  );
+
+  if (!verifiedPayout) {
+    throw new Error("OWNER_PAYOUT_NOT_VERIFIED_ON_TESTNET");
+  }
+
+  // txid da za a rubuta dole dole ne ya zama daidai da na Horizon.
+  if (clean(verifiedPayout.hash) !== clean(txid)) {
+    throw new Error("OWNER_PAYOUT_TXID_MISMATCH");
+  }
+
+  // Idan an riga an kammala, tabbatar da txid ɗin da aka adana.
+  if (clean(withdrawal.status) === "completed") {
+    if (clean(withdrawal.txid) !== clean(txid)) {
+      throw new Error(
+        "OWNER_WITHDRAWAL_ALREADY_COMPLETED_TXID_MISMATCH"
+      );
+    }
+
+    return withdrawal;
+  }
+
+  // Wannan RPC zai gudana ne bayan an tabbatar da ainihin payout.
   const settlement = await supabase.rpc(
     "complete_testnet_project_owner_withdrawal",
     {
@@ -679,7 +748,8 @@ async function markOwnerWithdrawalCompleted(requestId, txid) {
   }
 
   return result;
-      }
+}
+
 
 /* ============================================================
    SUBMIT TESTNET WITHDRAWAL PAYOUT
