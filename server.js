@@ -170,7 +170,9 @@ app.use(
     piTestnetAppWallet:
       process.env.PI_TESTNET_APP_WALLET || "",
     submitTestnetWithdrawalPayout,
-    markWithdrawalCompleted
+    markWithdrawalCompleted,
+    findTestnetWithdrawalPayoutByMemo,
+    markOwnerWithdrawalCompleted,
   })
 );
 
