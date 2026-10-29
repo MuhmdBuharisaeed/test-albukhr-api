@@ -33,6 +33,13 @@ submitTestnetWithdrawalPayout,
 markWithdrawalCompleted,
 findTestnetWithdrawalPayoutByMemo,
 markOwnerWithdrawalCompleted,
+if (typeof findTestnetWithdrawalPayoutByMemo !== "function") {
+  throw new Error("TESTNET_WITHDRAWAL_MEMO_LOOKUP_HELPER_REQUIRED");
+}
+
+if (typeof markOwnerWithdrawalCompleted !== "function") {
+  throw new Error("TESTNET_OWNER_WITHDRAWAL_SETTLEMENT_HELPER_REQUIRED");
+    }
 }) {
   if (!supabase) throw new Error("SUPABASE_CLIENT_REQUIRED");
   if (!axios) throw new Error("AXIOS_CLIENT_REQUIRED");
