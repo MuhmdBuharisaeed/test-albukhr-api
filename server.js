@@ -490,6 +490,27 @@ async function findTestnetPayoutByMemo(
   return null;
 }
 
+async function findTestnetWithdrawalPayoutByMemo(requestId) {
+  if (!clean(requestId)) {
+    throw new Error("REQUEST_ID_REQUIRED");
+  }
+
+  const sourcePublicKey = payoutWalletKeypair().publicKey();
+  const memoText = withdrawalMemo(requestId);
+
+  const existing = await findTestnetPayoutByMemo(
+    sourcePublicKey,
+    memoText
+  );
+
+  if (!existing) return null;
+
+  return {
+    txid: existing.hash,
+    memo: memoText,
+    reconciled: true,
+  };
+}
 
 /* ============================================================
    MARK WITHDRAWAL COMPLETED
