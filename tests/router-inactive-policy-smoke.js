@@ -58,10 +58,28 @@ const fakeAxios = {
 };
 const router = createRouter({
   supabase: fakeDb, axios: fakeAxios, piApiKey: 'test-only-key', piTestnetAppWallet: 'GTESTTREASURY',
-  submitTestnetWithdrawalPayout: async () => { throw new Error('payout must not execute in smoke test'); },
-  markWithdrawalCompleted: async () => { throw new Error('settlement must not execute in smoke test'); }
+    submitTestnetWithdrawalPayout: async () => {
+    throw new Error('payout must not execute in smoke test');
+  },
+  markWithdrawalCompleted: async () => {
+    throw new Error('settlement must not execute in smoke test');
+  },
+  findTestnetWithdrawalPayoutByMemo: async () => null,
+  markOwnerWithdrawalCompleted: async () => {
+    throw new Error('owner settlement must not execute in smoke test');
+  }
 });
-const requiredRoutes = ['/withdrawal/prepare','/withdrawal/assess','/owner/prepare-payment','/approve','/complete','/cancel','/withdrawal/execute'];
+const requiredRoutes = [
+  '/withdrawal/prepare',
+  '/withdrawal/assess',
+  '/owner/prepare-payment',
+  '/approve',
+  '/complete',
+  '/cancel',
+  '/withdrawal/execute',
+  '/owner/execute',
+  '/owner/reconcile'
+];
 for (const path of requiredRoutes) if (!routes[path]) throw new Error('ROUTE_NOT_MOUNTED:' + path);
 
 function makeResponse() {
