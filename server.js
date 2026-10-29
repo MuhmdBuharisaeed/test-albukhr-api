@@ -557,15 +557,38 @@ async function findTestnetWithdrawalPayoutByMemo(requestId) {
     throw new Error("REQUEST_ID_REQUIRED");
   }
 
+  const { data: requestRow, error } = await supabase
+    .from("project_owner_withdrawals")
+    .select("id,network,wallet_address,requested_amount")
+    .eq("id", requestId)
+    .eq("network", "testnet")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error("OWNER_WITHDRAWAL_READ_FAILED");
+  }
+
+  if (!requestRow) {
+    throw new Error("OWNER_WITHDRAWAL_NOT_FOUND");
+  }
+
+  const expectedAmount = numeric(requestRow.requested_amount);
+
   const sourcePublicKey = payoutWalletKeypair().publicKey();
   const memoText = withdrawalMemo(requestId);
 
   const existing = await findTestnetPayoutByMemo(
     sourcePublicKey,
-    memoText
+    memoText,
+    {
+      wallet_address: requestRow.wallet_address,
+      amount: expectedAmount,
+    }
   );
 
-  if (!existing) return null;
+  if (!existing) {
+    return null;
+  }
 
   return {
     txid: existing.hash,
