@@ -561,6 +561,41 @@ async function markWithdrawalCompleted(
   return result;
 }
 
+async function markOwnerWithdrawalCompleted(requestId, txid) {
+  if (!clean(requestId) || !clean(txid)) {
+    throw new Error(
+      "OWNER_PAYOUT_RECORDED_FAILED:Missing request ID or transaction ID."
+    );
+  }
+
+  const settlement = await supabase.rpc(
+    "complete_testnet_project_owner_withdrawal",
+    {
+      p_withdrawal_id: requestId,
+      p_txid: txid,
+      p_reviewed_by: null,
+    }
+  );
+
+  if (settlement.error) {
+    throw new Error(
+      `OWNER_PAYOUT_RECORDED_FAILED:${settlement.error.message}`
+    );
+  }
+
+  const result = Array.isArray(settlement.data)
+    ? settlement.data[0]
+    : settlement.data;
+
+  if (!result) {
+    throw new Error(
+      "OWNER_PAYOUT_RECORDED_FAILED:Database settlement returned no result."
+    );
+  }
+
+  return result;
+      }
+
 /* ============================================================
    SUBMIT TESTNET WITHDRAWAL PAYOUT
    ============================================================ */
