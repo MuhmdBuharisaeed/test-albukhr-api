@@ -427,6 +427,81 @@ OWNER_WITHDRAWAL_CLAIM_FAILED: 503,
     return data;
   }
 
+  async function getOwnedProjectOwnerWithdrawal(withdrawalId, piUid) {
+  const id = clean(withdrawalId);
+  if (!id) throw new Error("WITHDRAWAL_ID_REQUIRED");
+
+  const { data: owner, error: ownerError } = await supabase
+    .from("users")
+    .select("id,pi_uid,network")
+    .eq("pi_uid", clean(piUid))
+    .eq("network", NETWORK)
+    .maybeSingle();
+
+  if (ownerError || !owner) {
+    throw new Error("OWNER_IDENTITY_UNAVAILABLE");
+  }
+
+  const { data: withdrawal, error } = await supabase
+    .from("project_owner_withdrawals")
+    .select(
+      "id,project_id,owner_user_id,network,requested_amount,fee_rate,fee_amount,net_amount,wallet_address,status,txid,reviewed_by,reviewed_at,created_at,updated_at"
+    )
+    .eq("id", id)
+    .eq("owner_user_id", owner.id)
+    .eq("network", NETWORK)
+    .maybeSingle();
+
+  if (error) throw new Error("OWNER_WITHDRAWAL_READ_FAILED");
+  if (!withdrawal) throw new Error("OWNER_WITHDRAWAL_NOT_OWNED");
+
+  return { owner, withdrawal };
+}
+
+async function assertOwnerOutflowFeeReady(withdrawalId) {
+  const { data, error } = await supabase.rpc(
+    "assert_testnet_outflow_fee_ready",
+    {
+      p_source_type: "project_owner_withdrawal",
+      p_source_id: withdrawalId,
+    }
+  );
+
+  const assessment = Array.isArray(data) ? data[0] : data;
+
+  if (error || !assessment) {
+    const reason = clean(error && error.message);
+
+    const wrapped = new Error(
+      reason.includes("OUTFLOW_FEE_PAYMENT_REQUIRED")
+        ? "OUTFLOW_FEE_PAYMENT_REQUIRED"
+        : "FEE_ASSESSMENT_REQUIRED"
+    );
+
+    wrapped.status = 409;
+    throw wrapped;
+  }
+
+  const feeAmount = numeric(assessment.fee_amount);
+
+  if (feeAmount === null || feeAmount < 0) {
+    throw new Error("FEE_ASSESSMENT_REQUIRED");
+  }
+
+  if (feeAmount > 0 && assessment.fee_status !== "paid") {
+    throw new Error("OUTFLOW_FEE_PAYMENT_REQUIRED");
+  }
+
+  if (
+    feeAmount === 0 &&
+    !["not_required", "paid"].includes(clean(assessment.fee_status))
+  ) {
+    throw new Error("FEE_ASSESSMENT_REQUIRED");
+  }
+
+  return assessment;
+}
+
   async function createFeeAssessment(sourceType, sourceId) {
     const { data, error } = await supabase.rpc("create_testnet_outflow_fee_assessment", {
       p_source_type: sourceType,
