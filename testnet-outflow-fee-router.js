@@ -29,8 +29,10 @@ function createTestnetOutflowFeeRouter({
   piApiKey,
   piApiBase = "https://api.minepi.com/v2",
   piTestnetAppWallet = "",
-  submitTestnetWithdrawalPayout,
-  markWithdrawalCompleted,
+submitTestnetWithdrawalPayout,
+markWithdrawalCompleted,
+findTestnetWithdrawalPayoutByMemo,
+markOwnerWithdrawalCompleted,
 }) {
   if (!supabase) throw new Error("SUPABASE_CLIENT_REQUIRED");
   if (!axios) throw new Error("AXIOS_CLIENT_REQUIRED");
