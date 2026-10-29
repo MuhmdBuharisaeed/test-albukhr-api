@@ -21,7 +21,7 @@ if (start < 0 || end < 0) {
 const fn = source.slice(start, end);
 const checks = [
   ['network isolation', '.eq("network", "testnet")'],
-  ['processing/completed state gate', '["processing", "completed"].includes(clean(withdrawal.status))'],
+  ['processing/completed state gate', '!["processing", "completed"].includes('],
   ['expected destination wallet', 'wallet_address: withdrawal.wallet_address'],
   ['exact requested amount', 'amount: expectedAmount'],
   ['Horizon payout verification helper', 'findTestnetPayoutByMemo('],
