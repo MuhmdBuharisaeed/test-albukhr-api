@@ -491,14 +491,24 @@ async function assertOwnerOutflowFeeReady(withdrawalId) {
 
   const assessment = Array.isArray(data) ? data[0] : data;
 
-  if (error || !assessment) {
+    if (error || !assessment) {
     const reason = clean(error && error.message);
 
-    const wrapped = new Error(
-      reason.includes("OUTFLOW_FEE_PAYMENT_REQUIRED")
+    const code = reason.includes("TESTNET_GLOBAL_TREASURY_POLICY_INACTIVE")
+      ? "TESTNET_GLOBAL_TREASURY_POLICY_INACTIVE"
+      : reason.includes("OUTFLOW_FEE_PAYMENT_REQUIRED")
         ? "OUTFLOW_FEE_PAYMENT_REQUIRED"
-        : "FEE_ASSESSMENT_REQUIRED"
-    );
+        : "FEE_ASSESSMENT_REQUIRED";
+
+    const wrapped = new Error(code);
+
+    wrapped.status =
+      code === "TESTNET_GLOBAL_TREASURY_POLICY_INACTIVE"
+        ? 423
+        : 409;
+
+    throw wrapped;
+    }
 
     wrapped.status = 409;
     throw wrapped;
