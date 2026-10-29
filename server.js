@@ -728,11 +728,14 @@ async function submitTestnetWithdrawalPayout(
       requestRow.id
     );
 
-  const existing =
-    await findTestnetPayoutByMemo(
-      sourcePublicKey,
-      memoText
-    );
+  const existing = await findTestnetPayoutByMemo(
+  sourcePublicKey,
+  memoText,
+  {
+    wallet_address: requestRow.wallet_address,
+    amount,
+  }
+);
 
   if (existing) {
     return {
