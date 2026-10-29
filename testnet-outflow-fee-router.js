@@ -935,7 +935,249 @@ async function assertOwnerOutflowFeeReady(withdrawalId) {
       return sendError(res, error);
     }
   });
+  /* ---------------------------------------------------------
+     Owner withdrawal payout — fee-gated and owner-scoped.
+     --------------------------------------------------------- */
+  router.post("/owner/execute", async (req, res) => {
+    try {
+      const session = await getTestnetSession(req);
 
+      const { withdrawal } = await getOwnedProjectOwnerWithdrawal(
+        req.body && req.body.withdrawalId,
+        session.pi_uid
+      );
+
+      if (withdrawal.status === "completed") {
+        return res.json({
+          success: true,
+          network: NETWORK,
+          already_completed: true,
+          txid: withdrawal.txid,
+          withdrawal,
+        });
+      }
+
+      if (withdrawal.status === "processing") {
+        return res.status(409).json({
+          success: false,
+          network: NETWORK,
+          error: "OWNER_WITHDRAWAL_RECONCILIATION_REQUIRED",
+          withdrawal_id: withdrawal.id,
+          message:
+            "This withdrawal is already processing. Reconcile it before any retry.",
+        });
+      }
+
+      if (withdrawal.status !== "approved") {
+        throw new Error("OWNER_WITHDRAWAL_NOT_APPROVED");
+      }
+
+      if (!withdrawal.reviewed_by || !withdrawal.reviewed_at) {
+        throw new Error("OWNER_WITHDRAWAL_APPROVAL_REQUIRED");
+      }
+
+      // Fee verification must succeed before claiming or paying.
+      await assertOwnerOutflowFeeReady(withdrawal.id);
+
+      // Atomic compare-and-set: approved -> processing.
+      const { data: claimed, error: claimError } = await supabase
+        .from("project_owner_withdrawals")
+        .update({
+          status: "processing",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", withdrawal.id)
+        .eq("owner_user_id", withdrawal.owner_user_id)
+        .eq("network", NETWORK)
+        .eq("status", "approved")
+        .eq("reviewed_by", withdrawal.reviewed_by)
+        .select(
+          "id,project_id,owner_user_id,network,requested_amount,fee_rate,fee_amount,net_amount,wallet_address,status,txid,reviewed_by,reviewed_at,created_at,updated_at"
+        )
+        .maybeSingle();
+
+      if (claimError) {
+        const error = new Error("OWNER_WITHDRAWAL_CLAIM_FAILED");
+        error.status = 503;
+        throw error;
+      }
+
+      if (!claimed) {
+        const latest = await getOwnedProjectOwnerWithdrawal(
+          withdrawal.id,
+          session.pi_uid
+        );
+
+        if (latest.withdrawal.status === "completed") {
+          return res.json({
+            success: true,
+            network: NETWORK,
+            already_completed: true,
+            txid: latest.withdrawal.txid,
+            withdrawal: latest.withdrawal,
+          });
+        }
+
+        return res.status(409).json({
+          success: false,
+          network: NETWORK,
+          error: "OWNER_WITHDRAWAL_RECONCILIATION_REQUIRED",
+          withdrawal_id: withdrawal.id,
+        });
+      }
+
+      let payout;
+
+      try {
+        // The owner receives the full requested amount.
+        // The outflow fee is a separate payment by the initiator.
+        payout = await submitTestnetWithdrawalPayout({
+          ...claimed,
+          net_amount: claimed.requested_amount,
+        });
+
+        if (!payout || !clean(payout.txid)) {
+          throw new Error("PAYOUT_TXID_MISSING");
+        }
+      } catch (payoutError) {
+        console.error(
+          "[TESTNET OWNER WITHDRAWAL] payout outcome uncertain; do not retry automatically",
+          clean(payoutError && payoutError.message)
+        );
+
+        const error = new Error("PAYOUT_SUBMISSION_FAILED");
+        error.status = 502;
+        throw error;
+      }
+
+      try {
+        const completed = await markOwnerWithdrawalCompleted(
+          withdrawal.id,
+          payout.txid
+        );
+
+        return res.json({
+          success: true,
+          network: NETWORK,
+          payout: "completed",
+          reconciled: Boolean(payout.reconciled),
+          txid: payout.txid,
+          withdrawal: completed || claimed,
+        });
+      } catch (settlementError) {
+        console.error(
+          "[TESTNET OWNER WITHDRAWAL] payout submitted but settlement failed",
+          clean(settlementError && settlementError.message)
+        );
+
+        return res.status(502).json({
+          success: false,
+          network: NETWORK,
+          error: "PAYOUT_RECORDED_FAILED",
+          txid: payout.txid,
+          withdrawal_id: withdrawal.id,
+          message:
+            "The Testnet payout may have succeeded, but settlement failed. Reconcile before any retry.",
+        });
+      }
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  /* ---------------------------------------------------------
+     Owner withdrawal reconciliation — lookup only, never pays.
+     --------------------------------------------------------- */
+  router.post("/owner/reconcile", async (req, res) => {
+    try {
+      const session = await getTestnetSession(req);
+
+      const { withdrawal } = await getOwnedProjectOwnerWithdrawal(
+        req.body && req.body.withdrawalId,
+        session.pi_uid
+      );
+
+      if (withdrawal.status === "completed") {
+        return res.json({
+          success: true,
+          network: NETWORK,
+          reconciled: true,
+          payoutFound: true,
+          txid: withdrawal.txid,
+          withdrawal,
+        });
+      }
+
+      if (withdrawal.status !== "processing") {
+        return res.status(409).json({
+          success: false,
+          network: NETWORK,
+          error: "OWNER_WITHDRAWAL_NOT_RECONCILABLE",
+          withdrawal_id: withdrawal.id,
+          status: withdrawal.status,
+          message:
+            "Only a processing owner withdrawal can be reconciled.",
+        });
+      }
+
+      // This helper must verify the actual payout operation.
+      // It must never submit a new payment.
+      const found = await findTestnetWithdrawalPayoutByMemo(
+        withdrawal.id
+      );
+
+      const txid = clean(found && (found.txid || found.hash));
+
+      if (!txid) {
+        return res.json({
+          success: true,
+          network: NETWORK,
+          reconciled: false,
+          payoutFound: false,
+          withdrawal_id: withdrawal.id,
+          status: withdrawal.status,
+          message:
+            "No verified matching payout was found. No new payout was sent. Keep this request processing.",
+        });
+      }
+
+      // Second fee guard before settlement.
+      await assertOwnerOutflowFeeReady(withdrawal.id);
+
+      try {
+        const completed = await markOwnerWithdrawalCompleted(
+          withdrawal.id,
+          txid
+        );
+
+        return res.json({
+          success: true,
+          network: NETWORK,
+          reconciled: true,
+          payoutFound: true,
+          txid,
+          withdrawal: completed || withdrawal,
+        });
+      } catch (settlementError) {
+        console.error(
+          "[TESTNET OWNER WITHDRAWAL RECONCILIATION] settlement failed",
+          clean(settlementError && settlementError.message)
+        );
+
+        return res.status(502).json({
+          success: false,
+          network: NETWORK,
+          error: "PAYOUT_RECORDED_FAILED",
+          txid,
+          withdrawal_id: withdrawal.id,
+          message:
+            "A matching payout was found, but settlement failed. Do not resend the payout.",
+        });
+      }
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
   return router;
 }
 
