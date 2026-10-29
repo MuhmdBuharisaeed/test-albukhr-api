@@ -29,26 +29,37 @@ function createTestnetOutflowFeeRouter({
   piApiKey,
   piApiBase = "https://api.minepi.com/v2",
   piTestnetAppWallet = "",
-submitTestnetWithdrawalPayout,
-markWithdrawalCompleted,
-findTestnetWithdrawalPayoutByMemo,
-markOwnerWithdrawalCompleted,
-if (typeof findTestnetWithdrawalPayoutByMemo !== "function") {
-  throw new Error("TESTNET_WITHDRAWAL_MEMO_LOOKUP_HELPER_REQUIRED");
-}
-
-if (typeof markOwnerWithdrawalCompleted !== "function") {
-  throw new Error("TESTNET_OWNER_WITHDRAWAL_SETTLEMENT_HELPER_REQUIRED");
-    }
+  submitTestnetWithdrawalPayout,
+  markWithdrawalCompleted,
+  findTestnetWithdrawalPayoutByMemo,
+  markOwnerWithdrawalCompleted,
 }) {
-  if (!supabase) throw new Error("SUPABASE_CLIENT_REQUIRED");
-  if (!axios) throw new Error("AXIOS_CLIENT_REQUIRED");
-  if (!piApiKey) throw new Error("PI_API_KEY_REQUIRED");
+  if (!supabase) {
+    throw new Error("SUPABASE_CLIENT_REQUIRED");
+  }
+
+  if (!axios) {
+    throw new Error("AXIOS_CLIENT_REQUIRED");
+  }
+
+  if (!piApiKey) {
+    throw new Error("PI_API_KEY_REQUIRED");
+  }
+
   if (typeof submitTestnetWithdrawalPayout !== "function") {
     throw new Error("TESTNET_WITHDRAWAL_PAYOUT_HELPER_REQUIRED");
   }
+
   if (typeof markWithdrawalCompleted !== "function") {
     throw new Error("TESTNET_WITHDRAWAL_SETTLEMENT_HELPER_REQUIRED");
+  }
+
+  if (typeof findTestnetWithdrawalPayoutByMemo !== "function") {
+    throw new Error("TESTNET_WITHDRAWAL_MEMO_LOOKUP_HELPER_REQUIRED");
+  }
+
+  if (typeof markOwnerWithdrawalCompleted !== "function") {
+    throw new Error("TESTNET_OWNER_WITHDRAWAL_SETTLEMENT_HELPER_REQUIRED");
   }
 
   const router = express.Router();
