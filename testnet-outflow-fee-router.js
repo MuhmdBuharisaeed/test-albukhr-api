@@ -901,16 +901,33 @@ async function assertOwnerOutflowFeeReady(withdrawalId) {
       }
       if (withdrawal.status !== "pending") throw new Error("WITHDRAWAL_NOT_PAYABLE");
 
-      const { data: feeRow, error: feeError } = await supabase.rpc("assert_testnet_outflow_fee_ready", {
-        p_source_type: "staker_withdrawal",
-        p_source_id: withdrawal.id,
-      });
+            const { data: feeRow, error: feeError } = await supabase.rpc(
+        "assert_testnet_outflow_fee_ready",
+        {
+          p_source_type: "staker_withdrawal",
+          p_source_id: withdrawal.id,
+        }
+      );
+
       const assessment = Array.isArray(feeRow) ? feeRow[0] : feeRow;
-      if (feeError || !assessment || (Number(assessment.fee_amount) > 0 && assessment.fee_status !== "paid")) {
+
+      if (
+        feeError ||
+        !assessment ||
+        (
+          Number(assessment.fee_amount) > 0 &&
+          assessment.fee_status !== "paid"
+        )
+      ) {
         const reason = clean(feeError && feeError.message);
-        throw new Error(reason.includes("OUTFLOW_FEE_PAYMENT_REQUIRED")
-          ? "OUTFLOW_FEE_PAYMENT_REQUIRED"
-          : "OUTFLOW_FEE_ASSESSMENT_REQUIRED");
+
+        throw new Error(
+          reason.includes("TESTNET_GLOBAL_TREASURY_POLICY_INACTIVE")
+            ? "TESTNET_GLOBAL_TREASURY_POLICY_INACTIVE"
+            : reason.includes("OUTFLOW_FEE_PAYMENT_REQUIRED")
+              ? "OUTFLOW_FEE_PAYMENT_REQUIRED"
+              : "OUTFLOW_FEE_ASSESSMENT_REQUIRED"
+        );
       }
 
       const { data: claimData, error: claimError } = await supabase.rpc("claim_testnet_withdrawal", {
