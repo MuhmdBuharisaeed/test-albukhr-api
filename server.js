@@ -1842,11 +1842,18 @@ app.post(
           requestId
         );
 
-      const existing =
-        await findTestnetPayoutByMemo(
-          sourceKeypair.publicKey(),
-          memoText
-        );
+      const expectedStakerAmount = numeric(
+  requestRow.net_amount ?? requestRow.requested_amount
+);
+
+const existing = await findTestnetPayoutByMemo(
+  sourceKeypair.publicKey(),
+  memoText,
+  {
+    wallet_address: requestRow.wallet_address,
+    amount: expectedStakerAmount,
+  }
+);
 
       if (!existing) {
         return res.json({
