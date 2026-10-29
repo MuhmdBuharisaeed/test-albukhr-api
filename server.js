@@ -455,38 +455,98 @@ async function getWithdrawal(
 
 async function findTestnetPayoutByMemo(
   sourcePublicKey,
-  memoText
+  memoText,
+  expectedPayout
 ) {
-  const page =
-    await server
-      .transactions()
-      .forAccount(
-        sourcePublicKey
-      )
-      .order("desc")
-      .limit(
-        TESTNET_WITHDRAWAL_RECONCILE_LIMIT
-      )
-      .call();
+  const expectedWallet = clean(
+    expectedPayout && expectedPayout.wallet_address
+  );
+  const expectedAmount = numeric(
+    expectedPayout && expectedPayout.amount
+  );
 
-  for (
-    const tx of page.records || []
+  if (
+    !clean(sourcePublicKey) ||
+    !clean(memoText) ||
+    !expectedWallet ||
+    expectedAmount === null ||
+    expectedAmount <= 0
   ) {
-    if (
-      clean(tx.memo) !==
-      memoText
-    ) {
+    throw new Error("TESTNET_PAYOUT_EXPECTED_DETAILS_REQUIRED");
+  }
+
+  const page = await server
+    .transactions()
+    .forAccount(sourcePublicKey)
+    .order("desc")
+    .limit(TESTNET_WITHDRAWAL_RECONCILE_LIMIT)
+    .call();
+
+  let memoMatchCouldNotBeVerified = false;
+
+  for (const tx of page.records || []) {
+    if (clean(tx.memo) !== memoText) {
       continue;
     }
 
-    if (
-      tx.memo_type !==
-      "text"
-    ) {
+    if (tx.memo_type !== "text") {
+      memoMatchCouldNotBeVerified = true;
       continue;
     }
 
-    return tx;
+    // A failed transaction is not a completed payout.
+    if (tx.successful !== true) {
+      continue;
+    }
+
+    // The source must be the Testnet app payout wallet.
+    if (clean(tx.source_account) !== clean(sourcePublicKey)) {
+      memoMatchCouldNotBeVerified = true;
+      continue;
+    }
+
+    let operationPage;
+
+    try {
+      operationPage = await server
+        .operations()
+        .forTransaction(tx.hash)
+        .call();
+    } catch (error) {
+      const lookupError = new Error(
+        "TESTNET_PAYOUT_OPERATION_LOOKUP_FAILED"
+      );
+      lookupError.status = 503;
+      throw lookupError;
+    }
+
+    const validPaymentOperation = (
+      operationPage.records || []
+    ).some((operation) => {
+      const operationAmount = numeric(operation.amount);
+
+      return (
+        operation.type === "payment" &&
+        operation.transaction_successful === true &&
+        operation.asset_type === "native" &&
+        clean(operation.from) === clean(sourcePublicKey) &&
+        clean(operation.to) === expectedWallet &&
+        operationAmount !== null &&
+        operationAmount.toFixed(7) === expectedAmount.toFixed(7)
+      );
+    });
+
+    if (validPaymentOperation) {
+      return tx;
+    }
+
+    // A transaction uses the memo but does not match the expected payout.
+    // Do not treat it as settled, and do not automatically send another.
+    memoMatchCouldNotBeVerified = true;
+  }
+
+  if (memoMatchCouldNotBeVerified) {
+    throw new Error("TESTNET_PAYOUT_MEMO_MATCH_INVALID");
   }
 
   return null;
