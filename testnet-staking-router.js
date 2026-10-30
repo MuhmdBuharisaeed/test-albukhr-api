@@ -164,45 +164,185 @@ function createTestnetStakingRouter({
   }
 
   function friendlyMessage(code) {
-    const messages = {
-      TESTNET_SESSION_REQUIRED: "A valid ALBUKHR Testnet session is required.",
-      TESTNET_SESSION_INVALID: "The ALBUKHR Testnet session is invalid.",
-      TESTNET_SESSION_REVOKED: "The ALBUKHR Testnet session has been revoked.",
-      TESTNET_SESSION_EXPIRED: "The ALBUKHR Testnet session has expired.",
-      PI_ACCESS_TOKEN_REQUIRED: "Pi authentication is required before staking.",
-      PI_ACCESS_TOKEN_INVALID: "Pi authentication could not be verified.",
-      PI_USER_SESSION_MISMATCH: "Your Pi identity does not match your Testnet session.",
-      PI_PAYMENT_DESTINATION_MISMATCH: "The Pi payment destination is not the approved Testnet treasury.",
-      PROJECT_TREASURY_APP_WALLET_MISMATCH: "The configured project treasury does not match the Testnet app wallet.",
-      STAKING_INTENT_CREATE_FAILED: "The staking offer cannot be reserved under current ALBUKHR policy or liquidity coverage.",
-      STAKE_INTENT_ALREADY_PENDING: "You already have an unresolved staking payment for this project. Reconcile or cancel it before creating another stake.",
-      STAKE_INTENT_FINALIZATION_FAILED: "The payment was verified, but the stake needs safe reconciliation. Do not make a second payment.",
-      PI_PAYMENT_NOT_CONFIRMED_CANCELLED: "Pi has not confirmed the payment cancellation; the reward reserve remains protected until reconciliation.",
-      STAKING_POLICY_NOT_APPROVED: "ALBUKHR has not enabled staking for this project yet.",
-      STAKING_REWARD_RATE_EXCEEDS_ALBUKHR_LIMIT: "The requested reward rate exceeds the maximum approved by ALBUKHR.",
-      STAKING_DURATION_NOT_ALLOWED: "This staking duration is not in the ALBUKHR-approved duration list.",
-      PROJECT_OWNER_ACCESS_DENIED: "Only the verified owner of this Testnet project can change its offers.",
-      TESTNET_ADMIN_SESSION_REQUIRED:
-  "A Testnet admin session is required.",
-TESTNET_ADMIN_SESSION_INVALID:
-  "The Testnet admin session is invalid.",
-TESTNET_ADMIN_SESSION_REVOKED:
-  "The Testnet admin session has been revoked.",
-TESTNET_ADMIN_SESSION_EXPIRED:
-  "The Testnet admin session has expired.",
-TESTNET_ADMIN_ROLE_REQUIRED:
-  "An authorized Testnet admin role is required.",
-STAKING_POLICY_SUPER_ADMIN_REQUIRED:
-  "Only a Testnet super admin can provision a staking policy.",
-STAKING_POLICY_PROJECT_SCOPE_REQUIRED:
-  "The admin session is not authorized for this project.",
-STAKING_POLICY_ALREADY_EXISTS:
-  "A staking policy record already exists; provisioning did not change it.",
-STAKING_POLICY_PROVISION_FAILED:
-  "The pending staking policy could not be provisioned.",
-    };
-    return messages[code] || code;
-  }
+  const messages = {
+    // TESTNET USER SESSION
+    TESTNET_SESSION_REQUIRED:
+      "A valid ALBUKHR Testnet session is required.",
+    TESTNET_SESSION_INVALID:
+      "The ALBUKHR Testnet session is invalid.",
+    TESTNET_SESSION_REVOKED:
+      "The ALBUKHR Testnet session has been revoked.",
+    TESTNET_SESSION_EXPIRED:
+      "The ALBUKHR Testnet session has expired.",
+
+    // PI AUTHENTICATION
+    PI_ACCESS_TOKEN_REQUIRED:
+      "Pi authentication is required before staking.",
+    PI_ACCESS_TOKEN_INVALID:
+      "Pi authentication could not be verified.",
+    PI_ACCESS_TOKEN_VERIFY_FAILED:
+      "Pi authentication could not be verified because the Pi service is unavailable.",
+    PI_USER_SESSION_MISMATCH:
+      "Your Pi identity does not match your Testnet session.",
+
+    // PI PAYMENT VALIDATION
+    PI_PAYMENT_NOT_FOUND:
+      "The requested Pi payment could not be found.",
+    PI_PAYMENT_USER_MISMATCH:
+      "The Pi payment does not belong to your authenticated Pi account.",
+    PI_PAYMENT_NETWORK_INVALID:
+      "The Pi payment was not made on the required Testnet network.",
+    PI_PAYMENT_DIRECTION_INVALID:
+      "The Pi payment direction is invalid for this operation.",
+    PI_PAYMENT_CANCELLED:
+      "This Pi payment has already been cancelled.",
+    PI_PAYMENT_AMOUNT_INVALID:
+      "The Pi payment amount does not match the required amount.",
+    PI_PAYMENT_DESTINATION_MISMATCH:
+      "The Pi payment destination is not the approved Testnet treasury.",
+    PI_PAYMENT_NOT_APPROVED:
+      "The Pi payment has not been approved.",
+    PI_PAYMENT_NOT_COMPLETED:
+      "The Pi payment has not been completed.",
+    PI_PAYMENT_NOT_VERIFIED:
+      "The Pi payment could not be verified.",
+    PI_PAYMENT_TXID_MISMATCH:
+      "The blockchain transaction ID does not match the verified Pi payment.",
+    PI_PAYMENT_NOT_CONFIRMED_CANCELLED:
+      "Pi has not confirmed the payment cancellation; the reward reserve remains protected until reconciliation.",
+
+    // PROJECT VALIDATION
+    PROJECT_ID_AND_CODE_REQUIRED:
+      "A valid project ID and project code are required.",
+    PROJECT_NOT_APPROVED:
+      "This project has not been approved for Testnet staking.",
+    PROJECT_NOT_FOUND:
+      "The requested project could not be found.",
+    PROJECT_TREASURY_NOT_CONFIGURED:
+      "The project treasury has not been configured.",
+    PROJECT_TREASURY_NOT_ACTIVE:
+      "The project treasury is not active.",
+    PROJECT_TREASURY_APP_WALLET_MISMATCH:
+      "The configured project treasury does not match the Testnet app wallet.",
+
+    // STAKE INTENT VALIDATION
+    STAKE_INTENT_ID_REQUIRED:
+      "A staking intent ID is required.",
+    STAKE_INTENT_NOT_FOUND:
+      "The requested staking intent could not be found.",
+    STAKE_INTENT_MISMATCH:
+      "The staking intent does not match the requested project or payment.",
+    STAKE_INTENT_NOT_PENDING:
+      "This staking intent is no longer pending.",
+    STAKE_INTENT_ALREADY_PENDING:
+      "You already have an unresolved staking payment for this project. Reconcile or cancel it before creating another stake.",
+    STAKE_INTENT_ALREADY_BOUND_TO_PAYMENT:
+      "This staking intent is already linked to another Pi payment.",
+    STAKE_INTENT_EXPIRED:
+      "This staking intent has expired. Create a new staking request.",
+    STAKE_INTENT_BIND_FAILED:
+      "The Pi payment could not be safely linked to the staking intent.",
+    STAKE_INTENT_CANCEL_FAILED:
+      "The staking intent could not be cancelled. Please reconcile its current payment status.",
+    STAKE_INTENT_FINALIZATION_FAILED:
+      "The payment was verified, but the stake needs safe reconciliation. Do not make a second payment.",
+
+    // STAKING OPERATIONS
+    STAKING_OFFERS_READ_FAILED:
+      "Staking offers could not be loaded. Please try again later.",
+    STAKING_COVERAGE_READ_FAILED:
+      "The project's staking liquidity coverage could not be verified.",
+    STAKING_INTENT_CREATE_FAILED:
+      "The staking offer cannot be reserved under current ALBUKHR policy or liquidity coverage.",
+    STAKE_PAYMENT_READ_FAILED:
+      "The staking payment record could not be retrieved.",
+    STAKE_PAYMENT_RECORD_MISMATCH:
+      "The staking payment record does not match the verified payment details.",
+    STAKE_PAYMENT_RECORD_WRITE_FAILED:
+      "The verified staking payment could not be recorded. Reconciliation is required.",
+
+    // PI PAYMENT EXECUTION
+    PI_APPROVE_FAILED:
+      "Pi could not approve this payment. Please check its status before trying again.",
+    PI_COMPLETE_FAILED:
+      "Pi could not complete this payment. Check the payment status before attempting another payment.",
+
+    // EXISTING STAKING POLICY RULES
+    STAKING_POLICY_NOT_APPROVED:
+      "ALBUKHR has not enabled staking for this project yet.",
+    STAKING_REWARD_RATE_EXCEEDS_ALBUKHR_LIMIT:
+      "The requested reward rate exceeds the maximum approved by ALBUKHR.",
+    STAKING_DURATION_NOT_ALLOWED:
+      "This staking duration is not in the ALBUKHR-approved duration list.",
+    PROJECT_OWNER_ACCESS_DENIED:
+      "Only the verified owner of this Testnet project can change its offers.",
+
+    // TESTNET ADMIN SESSION
+    TESTNET_ADMIN_SESSION_REQUIRED:
+      "A Testnet admin session is required.",
+    TESTNET_ADMIN_SESSION_INVALID:
+      "The Testnet admin session is invalid.",
+    TESTNET_ADMIN_SESSION_REVOKED:
+      "The Testnet admin session has been revoked.",
+    TESTNET_ADMIN_SESSION_EXPIRED:
+      "The Testnet admin session has expired.",
+    TESTNET_ADMIN_SESSION_LOOKUP_FAILED:
+      "The Testnet admin session could not be verified because of a server error.",
+    TESTNET_ADMIN_ROLE_REQUIRED:
+      "An authorized Testnet admin role is required.",
+
+    // STAKING POLICY ADMINISTRATION
+    STAKING_POLICY_SUPER_ADMIN_REQUIRED:
+      "Only a Testnet super admin can provision a staking policy.",
+    STAKING_POLICY_PROJECT_SCOPE_REQUIRED:
+      "The admin session is not authorized for this project.",
+    STAKING_POLICY_READ_FAILED:
+      "The staking policy could not be loaded.",
+    STAKING_POLICY_ALREADY_EXISTS:
+      "A staking policy record already exists; provisioning did not change it.",
+    STAKING_POLICY_PROVISION_FAILED:
+      "The pending staking policy could not be provisioned.",
+
+    // TESTNET STAKING STAGE ADMINISTRATION
+    TESTNET_STAKING_STAGE_SUPER_ADMIN_REQUIRED:
+      "Only a Testnet super admin can assign or change a project's staking stage.",
+    TESTNET_ADMIN_ACTOR_ID_REQUIRED:
+      "The verified Testnet admin identity is missing. The staking stage change cannot proceed.",
+
+    STAKING_STAGE_PROJECTS_READ_FAILED:
+      "Approved Testnet projects could not be loaded for staking stage management.",
+    STAKING_STAGE_TREASURY_READ_FAILED:
+      "Testnet project treasury information could not be loaded.",
+    STAKING_STAGE_UPDATE_FAILED:
+      "The project's staking stage could not be updated. Please verify its current status before trying again.",
+
+    // TESTNET PROJECT STAGE VALIDATION
+    TESTNET_PROJECT_STAGE_FIELDS_REQUIRED:
+      "A valid project identifier and staking stage are required.",
+    TESTNET_PROJECT_STAKING_STAGE_INVALID:
+      "The selected staking stage is invalid. Choose an ALBUKHR-supported Testnet stage.",
+    TESTNET_APPROVED_PROJECT_REQUIRED:
+      "Only an approved Testnet project can be assigned a staking stage.",
+    TESTNET_PROJECT_STAGE_CHANGE_BLOCKED_PENDING_STAKE_INTENTS:
+      "The project's staking stage cannot be changed while unresolved staking payment intents exist.",
+    TESTNET_PROJECT_STAGE_CAP_BELOW_OUTSTANDING_PRINCIPAL:
+      "The selected stage capacity is below the project's outstanding staking principal.",
+
+    // GLOBAL TESTNET POLICY VALIDATION
+    GLOBAL_TESTNET_POLICY_NOT_CONFIGURED:
+      "The global Testnet staking policy has not been configured.",
+    GLOBAL_STAKING_STAGE_POLICY_NOT_CONFIGURED:
+      "The global staking stage policy has not been configured.",
+    GLOBAL_STAKING_STAGE_POLICY_INVALID:
+      "The configured global staking stage policy is invalid. Review its configuration before proceeding.",
+
+    // TESTNET STAKING COVERAGE
+    TESTNET_STAKING_COVERAGE_UNAVAILABLE:
+      "The project's Testnet staking liquidity coverage is unavailable or insufficient."
+  };
+
+  return messages[code] || "An unexpected error occurred. Please try again or contact ALBUKHR support.";
+      }
 
   async function getTestnetSession(req) {
     const token = sessionToken(req);
