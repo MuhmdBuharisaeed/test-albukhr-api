@@ -798,6 +798,289 @@ function assertAdminProjectScope(adminSession, project) {
     return reread.data;
   }
 
+  
+  // ============================================================
+  // TESTNET ADMIN — GLOBAL STAKING PROJECT STAGES
+  // ============================================================
+  //
+  // GET:
+  //   POST /staking/admin/project-stages
+  //
+  // SET:
+  //   POST /staking/admin/project-stages/set
+  //
+  // Security:
+  //   - Testnet only
+  //   - Super Admin only
+  //   - Server-side admin session validation
+  //   - Supabase service-role RPC only
+  //   - No direct browser database writes
+  //   - Does not activate staking
+  // ============================================================
+
+  const TESTNET_STAKING_STAGES = [
+    "setup_pre_operation",
+    "construction_fit_out",
+    "operating_expansion"
+  ];
+
+  function requireTestnetStakingSuperAdmin(adminSession) {
+    const roles = Array.isArray(adminSession && adminSession.roles)
+      ? adminSession.roles
+      : [];
+
+    if (!roles.includes("super_admin")) {
+      throw new Error("TESTNET_STAKING_STAGE_SUPER_ADMIN_REQUIRED");
+    }
+  }
+
+  // ------------------------------------------------------------
+  // LIST APPROVED TESTNET PROJECTS AND THEIR TREASURY STATUS
+  // ------------------------------------------------------------
+
+  router.post("/admin/project-stages", async (req, res) => {
+    try {
+      const adminSession = await getTestnetAdminSession(req);
+
+      requireTestnetStakingSuperAdmin(adminSession);
+
+      const { data: projectRows, error: projectError } =
+        await supabase
+          .from("projects")
+          .select("id,project_code,name,staking_stage")
+          .eq("network", NETWORK)
+          .eq("status", "approved")
+          .order("project_code", { ascending: true })
+          .limit(100);
+
+      if (projectError) {
+        console.error(
+          "[TESTNET STAGE PROJECT READ]",
+          clean(projectError.message)
+        );
+
+        throw new Error("STAKING_STAGE_PROJECTS_READ_FAILED");
+      }
+
+      const projects = Array.isArray(projectRows)
+        ? projectRows
+        : [];
+
+      if (projects.length === 0) {
+        return res.json({
+          success: true,
+          network: NETWORK,
+          projects: []
+        });
+      }
+
+      const projectIds = projects
+        .map((project) => clean(project.id))
+        .filter(Boolean);
+
+      if (projectIds.length === 0) {
+        throw new Error("STAKING_STAGE_PROJECTS_READ_FAILED");
+      }
+
+      const { data: treasuryRows, error: treasuryError } =
+        await supabase
+          .from("project_treasury")
+          .select(
+            "project_id,network,required_liquidity," +
+            "verified_liquidity,status"
+          )
+          .eq("network", NETWORK)
+          .in("project_id", projectIds);
+
+      if (treasuryError) {
+        console.error(
+          "[TESTNET STAGE TREASURY READ]",
+          clean(treasuryError.message)
+        );
+
+        throw new Error("STAKING_STAGE_TREASURY_READ_FAILED");
+      }
+
+      const treasuryByProject = new Map();
+
+      (Array.isArray(treasuryRows) ? treasuryRows : [])
+        .forEach((treasury) => {
+          treasuryByProject.set(
+            clean(treasury.project_id),
+            treasury
+          );
+        });
+
+      const result = projects.map((project) => {
+        const treasury = treasuryByProject.get(
+          clean(project.id)
+        ) || null;
+
+        return {
+          id: project.id,
+          project_code: project.project_code,
+          name: project.name,
+          staking_stage: project.staking_stage || null,
+
+          verified_liquidity: treasury
+            ? Number(treasury.verified_liquidity || 0)
+            : 0,
+
+          required_liquidity: treasury
+            ? Number(treasury.required_liquidity || 0)
+            : null,
+
+          treasury_status: treasury
+            ? clean(treasury.status) || "unknown"
+            : "Not configured"
+        };
+      });
+
+      return res.json({
+        success: true,
+        network: NETWORK,
+        projects: result
+      });
+
+    } catch (error) {
+      console.error(
+        "[TESTNET ADMIN PROJECT STAGES READ]",
+        clean(error && error.message)
+      );
+
+      return apiError(res, error);
+    }
+  });
+
+
+  // ------------------------------------------------------------
+  // ASSIGN OR CHANGE A TESTNET PROJECT STAKING STAGE
+  // ------------------------------------------------------------
+
+  router.post("/admin/project-stages/set", async (req, res) => {
+    try {
+      const adminSession = await getTestnetAdminSession(req);
+
+      requireTestnetStakingSuperAdmin(adminSession);
+
+      const projectId = clean(
+        req.body && req.body.projectId
+      );
+
+      const projectCode = clean(
+        req.body && req.body.projectCode
+      );
+
+      const stakingStage = clean(
+        req.body && req.body.stakingStage
+      );
+
+      if (!projectId || !projectCode || !stakingStage) {
+        throw new Error(
+          "TESTNET_PROJECT_STAGE_FIELDS_REQUIRED"
+        );
+      }
+
+      if (!TESTNET_STAKING_STAGES.includes(stakingStage)) {
+        throw new Error(
+          "TESTNET_PROJECT_STAKING_STAGE_INVALID"
+        );
+      }
+
+      // Revalidate the project from Testnet database.
+      // Client-provided project identity is never trusted alone.
+      const project = await getApprovedProject(
+        projectId,
+        projectCode
+      );
+
+      // This ID comes from the authenticated server-side
+      // Testnet admin session, not from the browser request.
+      const adminActorId = clean(
+        adminSession.admin_user_id
+      );
+
+      if (!adminActorId) {
+        throw new Error(
+          "TESTNET_ADMIN_ACTOR_ID_REQUIRED"
+        );
+      }
+
+      // The RPC is SECURITY DEFINER and executable only by
+      // service_role. This API uses the server-side service
+      // role client. Never expose the service key to the UI.
+      const { data: rpcData, error: rpcError } =
+        await supabase.rpc(
+          "set_testnet_project_staking_stage",
+          {
+            p_project_id: project.id,
+            p_staking_stage: stakingStage,
+            p_admin_actor_id: adminActorId
+          }
+        );
+
+      if (rpcError) {
+        const dbMessage = clean(rpcError.message);
+
+        console.error(
+          "[TESTNET PROJECT STAGE RPC]",
+          dbMessage
+        );
+
+        const knownErrors = [
+          "TESTNET_PROJECT_STAGE_FIELDS_REQUIRED",
+          "TESTNET_PROJECT_STAKING_STAGE_INVALID",
+          "TESTNET_APPROVED_PROJECT_REQUIRED",
+          "TESTNET_PROJECT_STAGE_CHANGE_BLOCKED_PENDING_STAKE_INTENTS",
+          "TESTNET_PROJECT_STAGE_CAP_BELOW_OUTSTANDING_PRINCIPAL",
+          "GLOBAL_TESTNET_POLICY_NOT_CONFIGURED",
+          "GLOBAL_STAKING_STAGE_POLICY_NOT_CONFIGURED",
+          "GLOBAL_STAKING_STAGE_POLICY_INVALID",
+          "TESTNET_STAKING_COVERAGE_UNAVAILABLE"
+        ];
+
+        const matchedError = knownErrors.find((code) =>
+          dbMessage.includes(code)
+        );
+
+        throw new Error(
+          matchedError || "STAKING_STAGE_UPDATE_FAILED"
+        );
+      }
+
+      const result = Array.isArray(rpcData)
+        ? rpcData[0]
+        : rpcData;
+
+      if (!result || result.success !== true) {
+        throw new Error("STAKING_STAGE_UPDATE_FAILED");
+      }
+
+      return res.json({
+        success: true,
+        network: NETWORK,
+
+        changed: result.changed === true,
+
+        project: {
+          id: project.id,
+          project_code: project.project_code,
+          name: project.name
+        },
+
+        staking_stage: result.staking_stage || stakingStage
+      });
+
+    } catch (error) {
+      console.error(
+        "[TESTNET ADMIN PROJECT STAGE UPDATE]",
+        clean(error && error.message)
+      );
+
+      return apiError(res, error);
+    }
+  });
+
   /*
  * TESTNET ADMIN STAKING POLICY
  *
