@@ -1,0 +1,1 @@
+create index if not exists testnet_project_owner_applications_project_fk_idx on public.testnet_project_owner_applications(project_id);
