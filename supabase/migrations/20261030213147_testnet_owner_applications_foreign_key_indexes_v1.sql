@@ -1,0 +1,22 @@
+
+create index if not exists testnet_owner_application_proof_uses_project_idx
+  on public.testnet_owner_application_proof_uses(project_id);
+create index if not exists testnet_owner_application_proof_uses_applicant_idx
+  on public.testnet_owner_application_proof_uses(applicant_testnet_user_id);
+
+create index if not exists testnet_project_owner_application_tickets_project_idx
+  on public.testnet_project_owner_application_tickets(project_id);
+create index if not exists testnet_project_owner_application_tickets_applicant_idx
+  on public.testnet_project_owner_application_tickets(applicant_testnet_user_id);
+
+create index if not exists testnet_project_owner_approval_tickets_application_idx
+  on public.testnet_project_owner_approval_tickets(application_id);
+create index if not exists testnet_project_owner_approval_tickets_project_idx
+  on public.testnet_project_owner_approval_tickets(project_id);
+create index if not exists testnet_project_owner_approval_tickets_applicant_idx
+  on public.testnet_project_owner_approval_tickets(applicant_testnet_user_id);
+
+create index if not exists testnet_project_owner_application_history_project_idx
+  on public.testnet_project_owner_application_history(project_id);
+create index if not exists testnet_project_owner_application_history_actor_idx
+  on public.testnet_project_owner_application_history(actor_testnet_user_id);
