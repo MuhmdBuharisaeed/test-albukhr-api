@@ -1197,13 +1197,27 @@ return data;
       identity.projectCode
     );
 
+        const owner = await getProjectOwner(project);
+
+    await assertOwnerIdentityVerified(project);
+
     const treasury = await getTreasury(project.id);
+
+    assertPaymentRecipientIsGlobalTreasury(
+      payment,
+      treasury
+    );
 
     return {
       identity,
       project,
+      owner,
       treasury,
-      funding: await validateFunding(payment, project.id, treasury),
+      funding: await validateFunding(
+        payment,
+        project.id,
+        treasury
+      ),
     };
   }
 
