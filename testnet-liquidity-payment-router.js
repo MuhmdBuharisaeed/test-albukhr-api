@@ -742,6 +742,81 @@ function createTestnetLiquidityPaymentRouter({
     };
     }
 
+    async function assertOwnerIdentityVerified(project) {
+    const projectId = clean(project?.id);
+    const ownerUserId = clean(project?.owner_user_id);
+
+    if (!projectId || !ownerUserId) {
+      throw new Error("PROJECT_OWNER_NOT_BOUND");
+    }
+
+    const { data, error } = await supabase
+      .from("project_owner_profiles")
+      .select(
+        "id,project_id,owner_user_id,network," +
+        "profile_status,verification_status," +
+        "verified_at,verified_by"
+      )
+      .eq("project_id", projectId)
+      .eq("owner_user_id", ownerUserId)
+      .eq("network", NETWORK)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error("OWNER_IDENTITY_READ_FAILED");
+    }
+
+    if (!data) {
+      throw new Error("OWNER_IDENTITY_PROFILE_NOT_FOUND");
+    }
+
+    if (
+      data.network !== NETWORK ||
+      clean(data.project_id) !== projectId ||
+      clean(data.owner_user_id) !== ownerUserId
+    ) {
+      throw new Error("OWNER_IDENTITY_BINDING_INVALID");
+    }
+
+    if (
+      clean(data.profile_status).toLowerCase() !== "active" ||
+      clean(data.verification_status).toLowerCase() !== "verified" ||
+      !clean(data.verified_at) ||
+      !clean(data.verified_by)
+    ) {
+      throw new Error("OWNER_IDENTITY_VERIFICATION_REQUIRED");
+    }
+
+    return data;
+    }
+
+    function assertPaymentRecipientIsGlobalTreasury(
+    payment,
+    treasury
+  ) {
+    const configuredAppWallet = clean(piTestnetAppWallet);
+    const globalTreasuryWallet = clean(treasury?.treasury_wallet);
+    const paymentRecipient = clean(payment?.to_address);
+
+    if (!configuredAppWallet) {
+      throw new Error("PI_TESTNET_APP_WALLET_REQUIRED");
+    }
+
+    if (!globalTreasuryWallet) {
+      throw new Error("GLOBAL_TREASURY_WALLET_REQUIRED");
+    }
+
+    if (configuredAppWallet !== globalTreasuryWallet) {
+      throw new Error("PI_APP_WALLET_GLOBAL_TREASURY_MISMATCH");
+    }
+
+    if (!paymentRecipient || paymentRecipient !== globalTreasuryWallet) {
+      throw new Error("PI_PAYMENT_GLOBAL_TREASURY_MISMATCH");
+    }
+
+    return true;
+    }
+
   function assertSessionIsProjectOwner(session, owner) {
     const sessionPiUid = clean(session?.pi_uid);
     const ownerPiUid = clean(owner?.pi_uid);
