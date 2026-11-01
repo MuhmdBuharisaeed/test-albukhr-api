@@ -1542,11 +1542,24 @@ return data;
 
       assertAdminProjectScope(adminSession, project);
 
-      // Check the project's current bound owner before crediting it.
+            // Check the project's current bound owner before crediting it.
       const owner = await getProjectOwner(project);
-      assertPaymentIsProjectOwnerPayment(payment, owner);
+
+      assertPaymentIsProjectOwnerPayment(
+        payment,
+        owner
+      );
+
+      // Reconciliation must not bypass Owner identity verification.
+      await assertOwnerIdentityVerified(project);
 
       const treasury = await getTreasury(project.id);
+
+      // Ensure the original Pi payment went to the Global Treasury.
+      assertPaymentRecipientIsGlobalTreasury(
+        payment,
+        treasury
+      );
 
       const payerUid = clean(payment?.user_uid);
 
@@ -1648,8 +1661,23 @@ return data;
       const state = await validateAdminPaymentProject(payment, req.body);
       assertAdminProjectScope(adminSession, state.project);
 
-      const owner = await getProjectOwner(state.project);
-      assertPaymentIsProjectOwnerPayment(payment, owner);
+            const owner = await getProjectOwner(project);
+
+      assertPaymentIsProjectOwnerPayment(
+        payment,
+        owner
+      );
+
+      // Incomplete payment recovery must retain the identity gate.
+      await assertOwnerIdentityVerified(project);
+
+      const treasury = await getTreasury(project.id);
+
+      // Prevent recovery from accepting a payment sent elsewhere.
+      assertPaymentRecipientIsGlobalTreasury(
+        payment,
+        treasury
+      );
 
       const txid = clean(
         req.body?.txid ||
