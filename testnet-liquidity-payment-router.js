@@ -739,10 +739,6 @@ function createTestnetLiquidityPaymentRouter({
       throw new Error("GLOBAL_TREASURY_NETWORK_INVALID");
     }
 
-    if (data.active !== true) {
-      throw new Error("GLOBAL_TREASURY_NOT_ACTIVE");
-    }
-
     if (!clean(data.treasury_wallet)) {
       throw new Error("GLOBAL_TREASURY_WALLET_REQUIRED");
     }
