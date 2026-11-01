@@ -835,29 +835,67 @@ function createTestnetLiquidityPaymentRouter({
     }
   }
 
-  async function getTreasury(projectId) {
+    async function getTreasury(projectId) {
+    const globalPolicy = await getGlobalTreasuryPolicy();
+
     const { data, error } = await supabase
       .from("project_treasury")
       .select(
-        "id,project_id,network,treasury_wallet,required_liquidity,verified_liquidity,status"
+        "id,project_id,network,treasury_wallet," +
+        "required_liquidity,verified_liquidity,status"
       )
       .eq("project_id", projectId)
       .eq("network", NETWORK)
       .maybeSingle();
 
-    if (error) throw new Error("TREASURY_READ_FAILED");
-    if (!data) throw new Error("TREASURY_NOT_CONFIGURED");
+    if (error) {
+      throw new Error("TREASURY_READ_FAILED");
+    }
+
+    if (!data) {
+      throw new Error("TREASURY_NOT_CONFIGURED");
+    }
+
+    if (data.network !== NETWORK) {
+      throw new Error("TREASURY_NETWORK_INVALID");
+    }
 
     if (clean(data.status).toLowerCase() !== "active") {
       throw new Error("TREASURY_NOT_ACTIVE");
     }
 
-    if (!clean(data.treasury_wallet)) {
+    const projectTreasuryWallet = clean(data.treasury_wallet);
+
+    if (!projectTreasuryWallet) {
       throw new Error("TREASURY_WALLET_REQUIRED");
     }
 
-    return data;
-  }
+    if (
+      projectTreasuryWallet !==
+      clean(globalPolicy.treasury_wallet)
+    ) {
+      throw new Error("PROJECT_GLOBAL_TREASURY_MISMATCH");
+    }
+
+    const projectRequired = numeric(data.required_liquidity);
+
+    if (projectRequired === null || projectRequired <= 0) {
+      throw new Error("PROJECT_LIQUIDITY_REQUIREMENT_INVALID");
+    }
+
+    const requiredLiquidity = Math.max(
+      globalPolicy.minimum_project_liquidity,
+      projectRequired,
+      MIN_LIQUIDITY
+    );
+
+    return {
+      ...data,
+      treasury_wallet: globalPolicy.treasury_wallet,
+      required_liquidity: requiredLiquidity,
+      global_treasury_policy_version: globalPolicy.policy_version,
+    };
+    }
 
   async function getVerifiedLiquidityPayments(projectId) {
   const { data, error } = await supabase
