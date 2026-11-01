@@ -698,6 +698,50 @@ function createTestnetLiquidityPaymentRouter({
     return data;
   }
 
+    async function getGlobalTreasuryPolicy() {
+    const { data, error } = await supabase
+      .from("testnet_global_treasury_policy")
+      .select(
+        "singleton_id,network,policy_version,active," +
+        "minimum_project_liquidity,treasury_wallet"
+      )
+      .eq("singleton_id", 1)
+      .eq("network", NETWORK)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error("GLOBAL_TREASURY_POLICY_READ_FAILED");
+    }
+
+    if (!data) {
+      throw new Error("GLOBAL_TREASURY_POLICY_NOT_CONFIGURED");
+    }
+
+    if (data.network !== NETWORK) {
+      throw new Error("GLOBAL_TREASURY_NETWORK_INVALID");
+    }
+
+    if (data.active !== true) {
+      throw new Error("GLOBAL_TREASURY_NOT_ACTIVE");
+    }
+
+    if (!clean(data.treasury_wallet)) {
+      throw new Error("GLOBAL_TREASURY_WALLET_REQUIRED");
+    }
+
+    const minimum = numeric(data.minimum_project_liquidity);
+
+    if (minimum === null || minimum < MIN_LIQUIDITY) {
+      throw new Error("GLOBAL_TREASURY_MINIMUM_INVALID");
+    }
+
+    return {
+      ...data,
+      minimum_project_liquidity: minimum,
+      treasury_wallet: clean(data.treasury_wallet),
+    };
+    }
+
   function assertSessionIsProjectOwner(session, owner) {
     const sessionPiUid = clean(session?.pi_uid);
     const ownerPiUid = clean(owner?.pi_uid);
