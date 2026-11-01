@@ -1232,11 +1232,24 @@ return data;
         identity.projectCode
       );
 
-      const owner = await getProjectOwner(project);
+            const owner = await getProjectOwner(project);
+
       assertSessionIsProjectOwner(session, owner);
 
+      await assertOwnerIdentityVerified(project);
+
       const treasury = await getTreasury(project.id);
-      const funding = await validateFunding(payment, project.id, treasury);
+
+      assertPaymentRecipientIsGlobalTreasury(
+        payment,
+        treasury
+      );
+
+      const funding = await validateFunding(
+        payment,
+        project.id,
+        treasury
+      );
 
       const approved = paymentDeveloperApproved(payment)
         ? payment
