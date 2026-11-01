@@ -1759,10 +1759,21 @@ return data;
         identity.projectCode
       );
 
-      const owner = await getProjectOwner(project);
-      assertPaymentIsProjectOwnerPayment(payment, owner);
+            const owner = await getProjectOwner(project);
+
+      assertPaymentIsProjectOwnerPayment(
+        payment,
+        owner
+      );
+
+      await assertOwnerIdentityVerified(project);
 
       const treasury = await getTreasury(project.id);
+
+      assertPaymentRecipientIsGlobalTreasury(
+        payment,
+        treasury
+      );
 
       const txid = clean(
         req.body?.txid ||
