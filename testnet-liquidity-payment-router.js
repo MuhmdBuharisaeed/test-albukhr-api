@@ -1322,10 +1322,18 @@ return data;
         identity.projectCode
       );
 
-      const owner = await getProjectOwner(project);
+            const owner = await getProjectOwner(project);
+
       assertSessionIsProjectOwner(session, owner);
 
+      await assertOwnerIdentityVerified(project);
+
       const treasury = await getTreasury(project.id);
+
+      assertPaymentRecipientIsGlobalTreasury(
+        payment,
+        treasury
+      );
 
       const completedPayment = await completeAndVerifyPiPayment(
         paymentIdentifier,
