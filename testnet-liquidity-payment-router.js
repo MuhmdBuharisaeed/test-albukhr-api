@@ -809,16 +809,6 @@ function validatePaymentBasics(payment, options = {}) {
     };
     }
 
-  async function assertGlobalTreasuryActiveForNewApproval() {
-  const policy = await getGlobalTreasuryPolicy();
-
-  if (policy.active !== true) {
-    throw new Error("GLOBAL_TREASURY_NOT_ACTIVE");
-  }
-
-  return policy;
-  }
-
     async function assertOwnerIdentityVerified(project) {
     const projectId = clean(project?.id);
     const ownerUserId = clean(project?.owner_user_id);
