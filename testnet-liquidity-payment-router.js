@@ -1857,26 +1857,30 @@ if (!paymentDeveloperApproved(payment)) {
       validatePaymentBasics(payment);
       validatePaymentDestination(payment);
 
-      const state = await validateAdminPaymentProject(payment, req.body);
-      assertAdminProjectScope(adminSession, state.project);
+      const state = await validateAdminPaymentProject(
+  payment,
+  req.body
+);
 
-            const owner = await getProjectOwner(project);
+assertAdminProjectScope(
+  adminSession,
+  state.project
+);
 
-      assertPaymentIsProjectOwnerPayment(
-        payment,
-        owner
-      );
+// Use the owner already resolved by validateAdminPaymentProject.
+assertPaymentIsProjectOwnerPayment(
+  payment,
+  state.owner
+);
 
-      // Incomplete payment recovery must retain the identity gate.
-      await assertOwnerIdentityVerified(project);
+// Owner identity verification must remain mandatory.
+await assertOwnerIdentityVerified(state.project);
 
-      const treasury = await getTreasury(project.id);
-
-      // Prevent recovery from accepting a payment sent elsewhere.
-      assertPaymentRecipientIsGlobalTreasury(
-        payment,
-        treasury
-      );
+// Use the treasury already validated by the helper.
+assertPaymentRecipientIsGlobalTreasury(
+  payment,
+  state.treasury
+);
 
       const txid = clean(
         req.body?.txid ||
