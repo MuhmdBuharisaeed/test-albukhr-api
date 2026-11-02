@@ -1935,105 +1935,132 @@ if (!paymentDeveloperApproved(payment)) {
     }
   });
 
-  /*
-   * PI INCOMPLETE CALLBACK
-   *
-   * No browser session is required, but the payment must match the
-   * current project owner and the authoritative Pi transaction.
-   */
-  router.post("/incomplete", async (req, res) => {
-    try {
-      const paymentIdentifier = clean(
-        req.body?.paymentId || req.body?.identifier
-      );
+/*
+ * PI INCOMPLETE CALLBACK
+ *
+ * Recovery is read-only with respect to Pi approval/completion.
+ * It may record a payment only when Pi has already confirmed:
+ * developer_completed + transaction_verified + matching TXID.
+ */
+router.post("/incomplete", async (req, res) => {
+  try {
+    const paymentIdentifier = clean(
+      req.body?.paymentId || req.body?.identifier
+    );
 
-      if (!paymentIdentifier) {
-        throw new Error("PAYMENT_ID_REQUIRED");
-      }
-
-      const payment = await getPayment(paymentIdentifier);
-
-      validatePaymentBasics(payment);
-      validatePaymentDestination(payment);
-
-      const identity = resolveProjectIdentity(payment, req.body);
-      validateMetadata(payment, identity.projectId, identity.projectCode);
-
-      const project = await getApprovedProject(
-        identity.projectId,
-        identity.projectCode
-      );
-
-            const owner = await getProjectOwner(project);
-
-      assertPaymentIsProjectOwnerPayment(
-        payment,
-        owner
-      );
-
-      await assertOwnerIdentityVerified(project);
-
-      const treasury = await getTreasury(project.id);
-
-      assertPaymentRecipientIsGlobalTreasury(
-        payment,
-        treasury
-      );
-
-      const txid = clean(
-        req.body?.txid ||
-        req.body?.transaction?.txid ||
-        authoritativePaymentTxid(payment)
-      );
-
-      if (!txid) {
-        return res.status(409).json({
-          success: false,
-          network: NETWORK,
-          error: "PI_PAYMENT_TRANSACTION_NOT_VERIFIED",
-          payment_id: paymentIdentifier,
-        });
-      }
-
-      validateCompletionTxid(payment, txid);
-
-      if (!paymentDeveloperApproved(payment)) {
-        await approvePayment(paymentIdentifier);
-      }
-
-      const latestBeforeComplete = await getPayment(paymentIdentifier);
-
-      const completedPayment = await completeAndVerifyPiPayment(
-        paymentIdentifier,
-        txid,
-        latestBeforeComplete
-      );
-
-      const record = await upsertPaymentRecord({
-        payment: completedPayment,
-        project,
-        treasury,
-        piUser: null,
-        session: null,
-        piStatus: "completed",
-        txid,
-      });
-
-      return res.json({
-        success: true,
-        network: NETWORK,
-        recovered: true,
-        payment_id: paymentIdentifier,
-        txid,
-        record,
-      });
-    } catch (error) {
-      console.error("[TESTNET LIQUIDITY INCOMPLETE]", error?.message || error);
-      return sendError(res, error);
+    if (!paymentIdentifier) {
+      throw new Error("PAYMENT_ID_REQUIRED");
     }
-  });
 
-  return router;
-}
+    const payment = await getPayment(paymentIdentifier);
 
-module.exports = createTestnetLiquidityPaymentRouter;
+    validatePaymentBasics(payment);
+    validatePaymentDestination(payment);
+
+    const identity = resolveProjectIdentity(payment, req.body);
+
+    validateMetadata(
+      payment,
+      identity.projectId,
+      identity.projectCode
+    );
+
+    const project = await getApprovedProject(
+      identity.projectId,
+      identity.projectCode
+    );
+
+    const owner = await getProjectOwner(project);
+
+    assertPaymentIsProjectOwnerPayment(
+      payment,
+      owner
+    );
+
+    await assertOwnerIdentityVerified(project);
+
+    const treasury = await getTreasury(project.id);
+
+    assertPaymentRecipientIsGlobalTreasury(
+      payment,
+      treasury
+    );
+
+    /*
+     * Do not accept a TXID supplied by the browser as authority.
+     * Use the TXID returned by Pi API only.
+     */
+    const authoritativeTxid =
+      authoritativePaymentTxid(payment);
+
+    const suppliedTxid = clean(
+      req.body?.txid ||
+      req.body?.transaction?.txid
+    );
+
+    if (
+      suppliedTxid &&
+      suppliedTxid !== authoritativeTxid
+    ) {
+      throw new Error("PI_PAYMENT_TXID_MISMATCH");
+    }
+
+    if (!paymentDeveloperCompleted(payment)) {
+      return res.status(409).json({
+        success: false,
+        network: NETWORK,
+        error: "PI_PAYMENT_NOT_COMPLETED",
+        payment_id: paymentIdentifier,
+        changed: false,
+      });
+    }
+
+    if (
+      !authoritativeTxid ||
+      !transactionVerified(payment) ||
+      !isVerifiedCompletedPayment(
+        payment,
+        authoritativeTxid
+      )
+    ) {
+      return res.status(409).json({
+        success: false,
+        network: NETWORK,
+        error: "PI_PAYMENT_TRANSACTION_NOT_VERIFIED",
+        payment_id: paymentIdentifier,
+        changed: false,
+      });
+    }
+
+    /*
+     * No approvePayment() or completeAndVerifyPiPayment()
+     * calls here. Pi must already have completed the payment.
+     */
+    const record = await upsertPaymentRecord({
+      payment,
+      project,
+      treasury,
+      piUser: null,
+      session: null,
+      piStatus: "completed",
+      txid: authoritativeTxid,
+    });
+
+    return res.json({
+      success: true,
+      network: NETWORK,
+      recovered: true,
+      payment_id: paymentIdentifier,
+      txid: authoritativeTxid,
+      record,
+    });
+
+  } catch (error) {
+    console.error(
+      "[TESTNET LIQUIDITY INCOMPLETE]",
+      error?.message || error
+    );
+
+    return sendError(res, error);
+  }
+});
