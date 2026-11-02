@@ -1939,8 +1939,7 @@ if (!paymentDeveloperApproved(payment)) {
  * PI INCOMPLETE CALLBACK
  *
  * Recovery is read-only with respect to Pi approval/completion.
- * It may record a payment only when Pi has already confirmed:
- * developer_completed + transaction_verified + matching TXID.
+ * It only records a payment after authoritative Pi verification.
  */
 router.post("/incomplete", async (req, res) => {
   try {
@@ -1952,11 +1951,16 @@ router.post("/incomplete", async (req, res) => {
       throw new Error("PAYMENT_ID_REQUIRED");
     }
 
+    // Read the authoritative payment directly from Pi API.
     const payment = await getPayment(paymentIdentifier);
 
+    // Reject cancelled payments, invalid amounts and wrong network.
     validatePaymentBasics(payment);
+
+    // Confirm that the payment was sent to this Testnet app.
     validatePaymentDestination(payment);
 
+    // Resolve project identity exclusively from Pi payment metadata.
     const identity = resolveProjectIdentity(payment, req.body);
 
     validateMetadata(
@@ -1965,11 +1969,13 @@ router.post("/incomplete", async (req, res) => {
       identity.projectCode
     );
 
+    // Only approved Testnet projects are eligible.
     const project = await getApprovedProject(
       identity.projectId,
       identity.projectCode
     );
 
+    // Confirm that the original payer is the project's bound owner.
     const owner = await getProjectOwner(project);
 
     assertPaymentIsProjectOwnerPayment(
@@ -1977,8 +1983,10 @@ router.post("/incomplete", async (req, res) => {
       owner
     );
 
+    // Owner identity verification remains mandatory.
     await assertOwnerIdentityVerified(project);
 
+    // Confirm the project's Testnet treasury configuration.
     const treasury = await getTreasury(project.id);
 
     assertPaymentRecipientIsGlobalTreasury(
@@ -1987,8 +1995,8 @@ router.post("/incomplete", async (req, res) => {
     );
 
     /*
-     * Do not accept a TXID supplied by the browser as authority.
-     * Use the TXID returned by Pi API only.
+     * The browser must never determine the authoritative TXID.
+     * Only the TXID returned by Pi API is accepted.
      */
     const authoritativeTxid =
       authoritativePaymentTxid(payment);
@@ -2005,6 +2013,7 @@ router.post("/incomplete", async (req, res) => {
       throw new Error("PI_PAYMENT_TXID_MISMATCH");
     }
 
+    // Pi must already have confirmed developer completion.
     if (!paymentDeveloperCompleted(payment)) {
       return res.status(409).json({
         success: false,
@@ -2015,6 +2024,7 @@ router.post("/incomplete", async (req, res) => {
       });
     }
 
+    // Require a real Pi TXID and verified blockchain transaction.
     if (
       !authoritativeTxid ||
       !transactionVerified(payment) ||
@@ -2033,8 +2043,12 @@ router.post("/incomplete", async (req, res) => {
     }
 
     /*
-     * No approvePayment() or completeAndVerifyPiPayment()
-     * calls here. Pi must already have completed the payment.
+     * IMPORTANT:
+     * This callback must never call approvePayment()
+     * or completeAndVerifyPiPayment().
+     *
+     * It records the payment only after Pi has confirmed
+     * developer_completed + transaction_verified + TXID.
      */
     const record = await upsertPaymentRecord({
       payment,
@@ -2051,7 +2065,9 @@ router.post("/incomplete", async (req, res) => {
       network: NETWORK,
       recovered: true,
       payment_id: paymentIdentifier,
+      project_code: project.project_code,
       txid: authoritativeTxid,
+      verification_status: record.verification_status,
       record,
     });
 
@@ -2064,3 +2080,9 @@ router.post("/incomplete", async (req, res) => {
     return sendError(res, error);
   }
 });
+
+  return router;
+}
+
+module.exports = createTestnetLiquidityPaymentRouter;
+
