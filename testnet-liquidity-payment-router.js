@@ -1713,11 +1713,9 @@ return data;
 
       let approved = payment;
 
-if (!paymentDeveloperApproved(payment)) {
-  await assertGlobalTreasuryActiveForNewApproval();
-
+      if (!paymentDeveloperApproved(payment)) {
   approved = await approvePayment(paymentIdentifier);
-}
+      }
 
       const latestPayment = await getPayment(paymentIdentifier);
 
