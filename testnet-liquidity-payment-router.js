@@ -2153,8 +2153,6 @@ assertPaymentRecipientIsGlobalTreasury(
       validateCompletionTxid(payment, txid);
 
     if (!paymentDeveloperApproved(payment)) {
-  await assertGlobalTreasuryActiveForNewApproval();
-
   await approvePayment(paymentIdentifier);
     }
 
