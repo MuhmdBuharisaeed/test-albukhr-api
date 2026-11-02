@@ -1325,9 +1325,13 @@ return data;
         treasury
       );
 
-      const approved = paymentDeveloperApproved(payment)
-        ? payment
-        : await approvePayment(paymentIdentifier);
+      let approved = payment;
+
+if (!paymentDeveloperApproved(payment)) {
+  await assertGlobalTreasuryActiveForNewApproval();
+
+  approved = await approvePayment(paymentIdentifier);
+}
 
       const latestPayment = await getPayment(paymentIdentifier);
 
