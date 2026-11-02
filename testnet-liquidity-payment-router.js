@@ -180,7 +180,7 @@ PROJECT_OWNER_PAYMENT_IDENTITY_MISMATCH: 403,
     const { data, error } = await supabase
       .from("testnet_sessions")
       .select(
-        "id,pi_uid,username,wallet_address,network,expires_at,revoked_at"
+        "id,pi_uid,testnet_pi_uid,username,wallet_address,network,expires_at,revoked_at"
       )
       .eq("session_hash", hashToken(token))
       .eq("network", NETWORK)
