@@ -1466,9 +1466,13 @@ if (!paymentDeveloperApproved(payment)) {
       const state = await validateAdminPaymentProject(payment, req.body);
       assertAdminProjectScope(adminSession, state.project);
 
-      const approved = paymentDeveloperApproved(payment)
-        ? payment
-        : await approvePayment(paymentIdentifier);
+      let approved = payment;
+
+if (!paymentDeveloperApproved(payment)) {
+  await assertGlobalTreasuryActiveForNewApproval();
+
+  approved = await approvePayment(paymentIdentifier);
+        }
 
       const latestPayment = await getPayment(paymentIdentifier);
 
