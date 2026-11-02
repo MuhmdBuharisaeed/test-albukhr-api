@@ -744,7 +744,7 @@ async function validateSessionAndPiIdentity(req) {
 
     const { data, error } = await supabase
       .from("users")
-      .select("id,pi_uid,network")
+      .select("id,pi_uid,testnet_pi_uid,network")
       .eq("id", ownerUserId)
       .eq("network", NETWORK)
       .maybeSingle();
