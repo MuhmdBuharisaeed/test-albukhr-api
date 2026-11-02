@@ -884,12 +884,16 @@ async function validateSessionAndPiIdentity(req) {
   }
 
   function assertPaymentIsProjectOwnerPayment(payment, owner) {
-    const paymentPiUid = clean(payment?.user_uid);
-    const ownerPiUid = clean(owner?.pi_uid);
+  const paymentPiUid = clean(payment?.user_uid);
+  const ownerSandboxPiUid = clean(owner?.testnet_pi_uid);
 
-    if (!paymentPiUid || !ownerPiUid || paymentPiUid !== ownerPiUid) {
-      throw new Error("PROJECT_OWNER_ACCESS_DENIED");
-    }
+  if (
+    !paymentPiUid ||
+    !ownerSandboxPiUid ||
+    paymentPiUid !== ownerSandboxPiUid
+  ) {
+    throw new Error("PROJECT_OWNER_PAYMENT_IDENTITY_MISMATCH");
+  }
   }
 
     async function getTreasury(projectId) {
