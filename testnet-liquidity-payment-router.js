@@ -1355,6 +1355,261 @@ return data;
     };
   }
 
+    /*
+   * CONFIRMED PAYMENT CANCELLATION
+   *
+   * Only Pi API cancellation can change the database record.
+   * Settled or verified payments must never be downgraded.
+   */
+  async function recordConfirmedPaymentCancellation({
+    paymentIdentifier,
+    payment,
+    project,
+    treasury,
+    piUser,
+    session,
+  }) {
+    // Never downgrade a payment already settled by Pi.
+    if (
+      paymentDeveloperCompleted(payment) ||
+      transactionVerified(payment)
+    ) {
+      throw new Error("PI_PAYMENT_ALREADY_SETTLED");
+    }
+
+    // A frontend cancellation callback is not proof of cancellation.
+    if (!paymentIsCancelled(payment)) {
+      throw new Error("PI_PAYMENT_CANCELLATION_NOT_CONFIRMED");
+    }
+
+    const existing = await readExistingPayment(paymentIdentifier);
+
+    // Preserve the original payment-to-project binding.
+    if (
+      existing &&
+      (
+        clean(existing.project_id) !== clean(project.id) ||
+        clean(existing.payer_pi_uid) !== clean(payment.user_uid) ||
+        Number(existing.amount) !== paymentAmount(payment) ||
+        clean(existing.network) !== NETWORK ||
+        clean(existing.action) !== ACTION ||
+        clean(existing.recipient_wallet) !==
+          clean(treasury.treasury_wallet)
+      )
+    ) {
+      throw new Error("LIQUIDITY_PAYMENT_RECORD_MISMATCH");
+    }
+
+    // Never downgrade an already completed or verified DB record.
+    if (
+      existing &&
+      (
+        clean(existing.pi_status).toLowerCase() === "completed" ||
+        clean(existing.verification_status).toLowerCase() === "verified"
+      )
+    ) {
+      throw new Error("PI_PAYMENT_ALREADY_SETTLED");
+    }
+
+    const record = await upsertPaymentRecord({
+      payment,
+      project,
+      treasury,
+      piUser,
+      session,
+      piStatus: "cancelled",
+    });
+
+    if (
+      clean(record.pi_status).toLowerCase() !== "cancelled" ||
+      clean(record.verification_status).toLowerCase() === "verified"
+    ) {
+      throw new Error("PI_PAYMENT_CANCELLATION_NOT_CONFIRMED");
+    }
+
+    return {
+      record,
+      changed:
+        !existing ||
+        clean(existing.pi_status).toLowerCase() !== "cancelled",
+    };
+  }
+
+  /*
+   * OWNER PAYMENT CANCELLATION
+   */
+  router.post("/cancel", async (req, res) => {
+    try {
+      const { session, piUser } =
+        await validateSessionAndPiIdentity(req);
+
+      const paymentIdentifier = clean(
+        req.body?.paymentId || req.body?.identifier
+      );
+
+      if (!paymentIdentifier) {
+        throw new Error("PAYMENT_ID_REQUIRED");
+      }
+
+      const payment = await getPayment(paymentIdentifier);
+
+      // Cancellation is allowed through this validation gate only.
+      validatePaymentBasics(payment, {
+        allowCancelled: true,
+      });
+
+      validatePaymentUser(payment, piUser);
+      validatePaymentDestination(payment);
+
+      const identity = resolveProjectIdentity(payment, req.body);
+
+      validateMetadata(
+        payment,
+        identity.projectId,
+        identity.projectCode
+      );
+
+      const project = await getApprovedProject(
+        identity.projectId,
+        identity.projectCode
+      );
+
+      const owner = await getProjectOwner(project);
+
+      assertSessionIsProjectOwner(session, owner);
+
+      await assertOwnerIdentityVerified(project);
+
+      const treasury = await getTreasury(project.id);
+
+      assertPaymentRecipientIsGlobalTreasury(
+        payment,
+        treasury
+      );
+
+      const cancellation = await recordConfirmedPaymentCancellation({
+        paymentIdentifier,
+        payment,
+        project,
+        treasury,
+        piUser,
+        session,
+      });
+
+      return res.json({
+        success: true,
+        network: NETWORK,
+        cancelled: true,
+        cancellation_confirmed: true,
+        payment_id: paymentIdentifier,
+        project_code: project.project_code,
+        changed: cancellation.changed,
+        pi_status: cancellation.record.pi_status,
+        verification_status:
+          cancellation.record.verification_status,
+        record: cancellation.record,
+      });
+
+    } catch (error) {
+      console.error(
+        "[TESTNET LIQUIDITY CANCEL]",
+        error?.message || error
+      );
+
+      return sendError(res, error);
+    }
+  });
+
+  /*
+   * ADMIN PAYMENT CANCELLATION
+   */
+  router.post("/admin-cancel", async (req, res) => {
+    try {
+      const { adminSession, piUser } =
+        await validateAdminAndPiIdentity(req);
+
+      const paymentIdentifier = clean(
+        req.body?.paymentId || req.body?.identifier
+      );
+
+      if (!paymentIdentifier) {
+        throw new Error("PAYMENT_ID_REQUIRED");
+      }
+
+      const payment = await getPayment(paymentIdentifier);
+
+      validatePaymentBasics(payment, {
+        allowCancelled: true,
+      });
+
+      validatePaymentUser(payment, piUser);
+      validatePaymentDestination(payment);
+
+      const identity = resolveProjectIdentity(payment, req.body);
+
+      validateMetadata(
+        payment,
+        identity.projectId,
+        identity.projectCode
+      );
+
+      const project = await getApprovedProject(
+        identity.projectId,
+        identity.projectCode
+      );
+
+      assertAdminProjectScope(adminSession, project);
+
+      const owner = await getProjectOwner(project);
+
+      assertPaymentIsProjectOwnerPayment(
+        payment,
+        owner
+      );
+
+      await assertOwnerIdentityVerified(project);
+
+      const treasury = await getTreasury(project.id);
+
+      assertPaymentRecipientIsGlobalTreasury(
+        payment,
+        treasury
+      );
+
+      const cancellation = await recordConfirmedPaymentCancellation({
+        paymentIdentifier,
+        payment,
+        project,
+        treasury,
+        piUser,
+        session: null,
+      });
+
+      return res.json({
+        success: true,
+        network: NETWORK,
+        cancelled: true,
+        cancellation_confirmed: true,
+        payment_id: paymentIdentifier,
+        project_code: project.project_code,
+        admin_roles: adminSession.roles,
+        changed: cancellation.changed,
+        pi_status: cancellation.record.pi_status,
+        verification_status:
+          cancellation.record.verification_status,
+        record: cancellation.record,
+      });
+
+    } catch (error) {
+      console.error(
+        "[TESTNET ADMIN LIQUIDITY CANCEL]",
+        error?.message || error
+      );
+
+      return sendError(res, error);
+    }
+  });
+
   router.post("/status", async (req, res) => {
   try {
     const paymentIdentifier = clean(req.body?.paymentId);
