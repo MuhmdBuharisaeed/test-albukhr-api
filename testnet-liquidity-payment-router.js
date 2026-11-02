@@ -1141,6 +1141,77 @@ async function verifiedLiquidity(projectId) {
     return data || null;
   }
 
+  async function getOwnerPaymentContext(req, paymentIdentifier) {
+  const { session, piUser } =
+    await validateSessionAndPiIdentity(req);
+
+  const payment = await getPayment(paymentIdentifier);
+
+  validatePaymentBasics(payment, {
+    allowCancelled: true,
+  });
+
+  validatePaymentUser(payment, piUser);
+  validatePaymentDestination(payment);
+
+  const identity = resolveProjectIdentity(
+    payment,
+    req.body
+  );
+
+  validateMetadata(
+    payment,
+    identity.projectId,
+    identity.projectCode
+  );
+
+  const project = await getApprovedProject(
+    identity.projectId,
+    identity.projectCode
+  );
+
+  const owner = await getProjectOwner(project);
+
+  assertSessionIsProjectOwner(session, owner);
+
+  await assertOwnerIdentityVerified(project);
+
+  const treasury = await getTreasury(project.id);
+
+  assertPaymentRecipientIsGlobalTreasury(
+    payment,
+    treasury
+  );
+
+  const existing = await readExistingPayment(
+    paymentIdentifier
+  );
+
+  if (
+    existing &&
+    (
+      clean(existing.project_id) !== clean(project.id) ||
+      clean(existing.payer_pi_uid) !== clean(payment.user_uid) ||
+      Number(existing.amount) !== paymentAmount(payment) ||
+      clean(existing.network) !== NETWORK ||
+      clean(existing.action) !== ACTION ||
+      clean(existing.recipient_wallet) !==
+        clean(treasury.treasury_wallet)
+    )
+  ) {
+    throw new Error("LIQUIDITY_PAYMENT_RECORD_MISMATCH");
+  }
+
+  return {
+    session,
+    piUser,
+    payment,
+    project,
+    treasury,
+    existing,
+  };
+  }
+
   async function upsertPaymentRecord({
     payment,
     project,
