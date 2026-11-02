@@ -1764,9 +1764,11 @@ if (!paymentDeveloperApproved(payment)) {
 
       validateCompletionTxid(payment, txid);
 
-      if (!paymentDeveloperApproved(payment)) {
-        await approvePayment(paymentIdentifier);
-      }
+    if (!paymentDeveloperApproved(payment)) {
+  await assertGlobalTreasuryActiveForNewApproval();
+
+  await approvePayment(paymentIdentifier);
+    }
 
       const latestBeforeComplete = await getPayment(paymentIdentifier);
 
