@@ -590,31 +590,38 @@ async function validateSessionAndPiIdentity(req) {
     return latestPayment;
   }
 
-  function validatePaymentBasics(payment) {
-    if (!payment) throw new Error("PI_PAYMENT_NOT_FOUND");
+  function paymentIsCancelled(payment) {
+  return Boolean(
+    payment?.status?.cancelled === true ||
+    payment?.status?.user_cancelled === true
+  );
+}
 
-    const network = clean(payment.network).toLowerCase();
+function validatePaymentBasics(payment, options = {}) {
+  if (!payment) throw new Error("PI_PAYMENT_NOT_FOUND");
 
-    if (network !== "pi testnet" && network !== "testnet") {
-      throw new Error("PI_PAYMENT_NETWORK_INVALID");
-    }
+  const network = clean(payment.network).toLowerCase();
 
-    if (clean(payment.direction) !== "user_to_app") {
-      throw new Error("PI_PAYMENT_DIRECTION_INVALID");
-    }
+  if (network !== "pi testnet" && network !== "testnet") {
+    throw new Error("PI_PAYMENT_NETWORK_INVALID");
+  }
 
-    if (
-      payment?.status?.cancelled === true ||
-      payment?.status?.user_cancelled === true
-    ) {
-      throw new Error("PI_PAYMENT_CANCELLED");
-    }
+  if (clean(payment.direction) !== "user_to_app") {
+    throw new Error("PI_PAYMENT_DIRECTION_INVALID");
+  }
 
-    const amount = paymentAmount(payment);
+  if (
+    paymentIsCancelled(payment) &&
+    options.allowCancelled !== true
+  ) {
+    throw new Error("PI_PAYMENT_CANCELLED");
+  }
 
-    if (amount === null || amount <= 0) {
-      throw new Error("PI_PAYMENT_AMOUNT_INVALID");
-    }
+  const amount = paymentAmount(payment);
+
+  if (amount === null || amount <= 0) {
+    throw new Error("PI_PAYMENT_AMOUNT_INVALID");
+  }
   }
 
   function validatePaymentUser(payment, piUser) {
