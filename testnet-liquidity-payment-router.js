@@ -313,19 +313,58 @@ PROJECT_OWNER_PAYMENT_IDENTITY_MISMATCH: 403,
     }
   }
 
-  async function validateSessionAndPiIdentity(req) {
+async function validateSessionAndPiIdentity(req) {
   const session = await getTestnetSession(req);
   const piUser = await getPiUser(bearer(req));
 
+  const gatewayPiUid = clean(session.pi_uid);
+  const sandboxPiUid = clean(piUser.uid);
+
+  if (!gatewayPiUid || !sandboxPiUid) {
+    throw new Error("PI_USER_SESSION_MISMATCH");
+  }
+
+  // If the session already contains a Sandbox UID,
+  // it must match the currently verified Pi identity.
+  const sessionSandboxUid = clean(session.testnet_pi_uid);
+
   if (
-    !clean(session.pi_uid) ||
-    clean(session.pi_uid) !== clean(piUser.uid)
+    sessionSandboxUid &&
+    sessionSandboxUid !== sandboxPiUid
   ) {
     throw new Error("PI_USER_SESSION_MISMATCH");
   }
 
-  return { session, piUser };
+  // Resolve the canonical ALBUKHR identity first.
+  const { data: ownerIdentity, error } = await supabase
+    .from("users")
+    .select("id,pi_uid,testnet_pi_uid,network")
+    .eq("pi_uid", gatewayPiUid)
+    .eq("network", NETWORK)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error("OWNER_IDENTITY_LOOKUP_FAILED");
   }
+
+  if (!ownerIdentity) {
+    throw new Error("OWNER_SANDBOX_IDENTITY_NOT_LINKED");
+  }
+
+  if (
+    clean(ownerIdentity.network) !== NETWORK ||
+    clean(ownerIdentity.pi_uid) !== gatewayPiUid ||
+    clean(ownerIdentity.testnet_pi_uid) !== sandboxPiUid
+  ) {
+    throw new Error("OWNER_SANDBOX_IDENTITY_NOT_LINKED");
+  }
+
+  return {
+    session,
+    piUser,
+    ownerIdentity,
+  };
+}
   
   async function validateAdminAndPiIdentity(req) {
     const adminSession = await getTestnetAdminSession(req);
