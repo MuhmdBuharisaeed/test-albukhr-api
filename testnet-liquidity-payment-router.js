@@ -1352,6 +1352,63 @@ return data;
     };
   }
 
+  router.post("/status", async (req, res) => {
+  try {
+    const paymentIdentifier = clean(req.body?.paymentId);
+
+    if (!paymentIdentifier) {
+      throw new Error("PAYMENT_ID_REQUIRED");
+    }
+
+    const context = await getOwnerPaymentContext(
+      req,
+      paymentIdentifier
+    );
+
+    const payment = context.payment;
+
+    const cancelled = paymentIsCancelled(payment);
+
+    const status = cancelled
+      ? "cancelled"
+      : paymentDeveloperCompleted(payment)
+        ? "completed"
+        : paymentDeveloperApproved(payment)
+          ? "approved"
+          : "pending";
+
+    return res.json({
+      success: true,
+      network: NETWORK,
+      payment_id: paymentIdentifier,
+      project_code: context.project.project_code,
+      pi_status: status,
+      developer_approved: paymentDeveloperApproved(payment),
+      developer_completed: paymentDeveloperCompleted(payment),
+      transaction_verified: transactionVerified(payment),
+      transaction_id_present: Boolean(
+        authoritativePaymentTxid(payment)
+      ),
+      cancellation_confirmed: cancelled,
+      database_record: context.existing
+        ? {
+            pi_status: context.existing.pi_status,
+            verification_status:
+              context.existing.verification_status,
+          }
+        : null,
+      changed: false,
+    });
+  } catch (error) {
+    console.error(
+      "[TESTNET LIQUIDITY STATUS]",
+      error?.message || error
+    );
+
+    return sendError(res, error);
+  }
+});
+
   /*
    * OWNER APPROVAL
    */
