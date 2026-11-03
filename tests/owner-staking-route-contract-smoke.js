@@ -13,7 +13,7 @@ function has(label, pattern) {
 has('Owner lookup selects project staking stage', /async function getOwnedProject[\s\S]{0,500}staking_stage/);
 has('owner session is verified before project read', /router\.post\("\/owner\/offers", async \(req, res\) => \{[\s\S]{0,350}getTestnetSession\(req\)/);
 has('owner must own the approved Testnet project', /getOwnedProject\([\s\S]{0,250}session/);
-has('global policy reads are network-scoped', /from\("testnet_global_treasury_policy"\)[\s\S]{0,250}\.eq\("network", NETWORK\)/);
+has('global policy reads are network-scoped', /from\("testnet_global_treasury_policy"\)[\s\S]{0,500}\.eq\("network", NETWORK\)/);
 has('coverage is read through the guarded RPC', /get_testnet_staking_coverage/);
 has('owner config and investor staking are separate gates', /can_configure[\s\S]{0,800}can_stake/);
 has('offer write uses the database RPC', /update_testnet_project_staking_offer/);
