@@ -570,7 +570,7 @@ function assertAdminProjectScope(adminSession, project) {
     if (!id || !code) throw new Error("PROJECT_ID_AND_CODE_REQUIRED");
     const { data, error } = await supabase
       .from("projects")
-      .select("id,project_code,name,network,status")
+      .select("id,project_code,name,network,status,owner_user_id,staking_stage")
       .eq("id", id).eq("project_code", code)
       .eq("network", NETWORK).eq("status", "approved")
       .maybeSingle();
