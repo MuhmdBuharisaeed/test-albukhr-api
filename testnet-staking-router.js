@@ -1142,11 +1142,11 @@ router.post("/admin/policy", async (req, res) => {
 });
 
 // Create a disabled, pending Testnet policy.
+
 router.post("/admin/policy/provision", async (req, res) => {
   try {
     const adminSession = await getTestnetAdminSession(req);
 
-    // Only a Testnet super admin may provision a policy.
     if (!(adminSession.roles || []).includes("super_admin")) {
       throw new Error("STAKING_POLICY_SUPER_ADMIN_REQUIRED");
     }
@@ -1156,69 +1156,33 @@ router.post("/admin/policy/provision", async (req, res) => {
       req.body && req.body.projectCode
     );
 
-    const { data: existing, error: existingError } =
-      await supabase
-        .from("project_staking_risk_controls")
-        .select("id,project_id,network")
-        .eq("project_id", project.id)
-        .eq("network", NETWORK)
-        .maybeSingle();
-
-    if (existingError) {
-      throw new Error("STAKING_POLICY_READ_FAILED");
-    }
-
-    if (existing) {
-      throw new Error("STAKING_POLICY_ALREADY_EXISTS");
-    }
-
-    const { data: policy, error: insertError } =
-      await supabase
-        .from("project_staking_risk_controls")
-        .insert({
-          project_id: project.id,
-          project_code: project.project_code,
-          network: NETWORK,
-          staking_enabled: false,
-          approval_status: "pending",
-          minimum_liquidity: 100,
-          reward_reserve_coverage_percent: 100
-          // Risk limits remain unset until formally reviewed.
-        })
-        .select(
-          "id,project_id,project_code,network,staking_enabled," +
-          "approval_status,minimum_liquidity,capital_reserve_percent," +
-          "maximum_deployment_percent,max_reward_rate," +
-          "max_active_principal,reward_reserve_coverage_percent," +
-          "created_at,updated_at"
-        )
-        .maybeSingle();
-
-    if (insertError || !policy) {
-      if (clean(insertError && insertError.code) === "23505") {
-        throw new Error("STAKING_POLICY_ALREADY_EXISTS");
+    const { data, error } = await supabase.rpc(
+      "provision_testnet_project_staking_risk_control",
+      {
+        p_project_id: project.id,
+        p_admin_session_id: adminSession.id
       }
+    );
 
-      console.error(
-        "[TESTNET STAKING POLICY PROVISION DB]",
-        clean(insertError && insertError.message)
-      );
+    if (error || !data || !data.id) {
+      const message = clean(error && error.message);
+
+      console.error("[TESTNET STAKING POLICY PROVISION RPC]", message);
+
+      if (message.includes("STAKING_POLICY_ALREADY_EXISTS"))
+        throw new Error("STAKING_POLICY_ALREADY_EXISTS");
+
+      if (message.includes("PROJECT_STAKING_STAGE_REQUIRED"))
+        throw new Error("PROJECT_STAKING_STAGE_REQUIRED");
+
+      if (message.includes("TESTNET_STAKING_SUPER_ADMIN_REQUIRED"))
+        throw new Error("STAKING_POLICY_SUPER_ADMIN_REQUIRED");
+
+      if (message.includes("PROJECT_TREASURY_OR_TARGET_NOT_CONFIGURED"))
+        throw new Error("PROJECT_TREASURY_NOT_CONFIGURED");
 
       throw new Error("STAKING_POLICY_PROVISION_FAILED");
     }
-
-    console.info(
-      "[TESTNET STAKING POLICY PROVISION]",
-      JSON.stringify({
-        network: NETWORK,
-        project_id: project.id,
-        project_code: project.project_code,
-        actor_admin_user_id: adminSession.admin_user_id,
-        policy_id: policy.id,
-        approval_status: policy.approval_status,
-        staking_enabled: policy.staking_enabled
-      })
-    );
 
     return res.status(201).json({
       success: true,
@@ -1228,13 +1192,89 @@ router.post("/admin/policy/provision", async (req, res) => {
         project_code: project.project_code,
         name: project.name
       },
-      policy,
+      policy: data,
       requires_manual_review: true,
       staking_enabled: false
     });
+
   } catch (error) {
     console.error(
       "[TESTNET STAKING POLICY PROVISION]",
+      clean(error && error.message)
+    );
+
+    return apiError(res, error);
+  }
+});
+
+// Super Admin review is separate from provisioning.
+// Approval never enables staking.
+router.post("/admin/policy/review", async (req, res) => {
+  try {
+    const adminSession = await getTestnetAdminSession(req);
+
+    if (!(adminSession.roles || []).includes("super_admin")) {
+      throw new Error("STAKING_POLICY_SUPER_ADMIN_REQUIRED");
+    }
+
+    const project = await getApprovedProject(
+      req.body && req.body.projectId,
+      req.body && req.body.projectCode
+    );
+
+    const decision = clean(
+      req.body && req.body.decision
+    ).toLowerCase();
+
+    if (!["approved", "rejected", "suspended"].includes(decision)) {
+      throw new Error("STAKING_POLICY_REVIEW_DECISION_INVALID");
+    }
+
+    const { data, error } = await supabase.rpc(
+      "review_testnet_project_staking_risk_control",
+      {
+        p_project_id: project.id,
+        p_admin_session_id: adminSession.id,
+        p_decision: decision
+      }
+    );
+
+    if (error || !data || !data.id) {
+      const message = clean(error && error.message);
+
+      console.error("[TESTNET STAKING POLICY REVIEW RPC]", message);
+
+      if (message.includes("STAKING_POLICY_NOT_PROVISIONED"))
+        throw new Error("STAKING_POLICY_NOT_PROVISIONED");
+
+      if (message.includes("STAKING_POLICY_NOT_PENDING_REVIEW"))
+        throw new Error("STAKING_POLICY_NOT_PENDING_REVIEW");
+
+      if (message.includes("TESTNET_RISK_CONTROLS_STALE_OR_POLICY_MISMATCH"))
+        throw new Error("STAKING_POLICY_REVIEW_STALE");
+
+      if (message.includes("TESTNET_STAKING_SUPER_ADMIN_REQUIRED"))
+        throw new Error("STAKING_POLICY_SUPER_ADMIN_REQUIRED");
+
+      throw new Error("STAKING_POLICY_REVIEW_FAILED");
+    }
+
+    return res.json({
+      success: true,
+      network: NETWORK,
+      project: {
+        id: project.id,
+        project_code: project.project_code,
+        name: project.name
+      },
+      policy: data,
+      staking_enabled: false,
+      requires_separate_staking_enablement: decision === "approved"
+    });
+
+  } catch (error) {
+    console.error(
+      "[TESTNET STAKING POLICY REVIEW]",
       clean(error && error.message)
     );
 
