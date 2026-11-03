@@ -1939,10 +1939,14 @@ router.post("/admin/policy/review", async (req, res) => {
       if (error || !data) {
         const message = clean(error && error.message);
         console.error("[TESTNET STAKING OWNER OFFER UPDATE]", message);
-        if (message.includes("PROJECT_OWNER_ACCESS_DENIED")) throw new Error("PROJECT_OWNER_ACCESS_DENIED");
+                if (message.includes("PROJECT_OWNER_ACCESS_DENIED")) throw new Error("PROJECT_OWNER_ACCESS_DENIED");
         if (message.includes("STAKING_REWARD_RATE_EXCEEDS_ALBUKHR_LIMIT")) throw new Error("STAKING_REWARD_RATE_EXCEEDS_ALBUKHR_LIMIT");
         if (message.includes("STAKING_DURATION_NOT_ALLOWED")) throw new Error("STAKING_DURATION_NOT_ALLOWED");
         if (message.includes("STAKING_POLICY_NOT_APPROVED")) throw new Error("STAKING_POLICY_NOT_APPROVED");
+        if (message.includes("STAKING_POLICY_REVIEW_STALE")) throw new Error("STAKING_POLICY_REVIEW_STALE");
+        if (message.includes("PROJECT_STAKING_STAGE_REQUIRED")) throw new Error("PROJECT_STAKING_STAGE_REQUIRED");
+        if (message.includes("PROJECT_TREASURY_NOT_CONFIGURED")) throw new Error("PROJECT_TREASURY_NOT_CONFIGURED");
+        if (message.includes("GLOBAL_TESTNET_POLICY_NOT_CONFIGURED")) throw new Error("GLOBAL_TESTNET_POLICY_NOT_CONFIGURED");
         if (message.includes("COVERAGE")) throw new Error("STAKING_INTENT_CREATE_FAILED");
         throw new Error("STAKING_OFFERS_READ_FAILED");
       }
