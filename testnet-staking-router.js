@@ -309,6 +309,26 @@ PROJECT_TREASURY_NOT_CONFIGURED: 409,
       "A staking policy record already exists; provisioning did not change it.",
     STAKING_POLICY_PROVISION_FAILED:
       "The pending staking policy could not be provisioned.",
+    STAKING_POLICY_REVIEW_FAILED:
+  "The staking risk-control review could not be saved.",
+
+STAKING_POLICY_REVIEW_DECISION_INVALID:
+  "Choose approved, rejected, or suspended for the risk-control review.",
+
+STAKING_POLICY_NOT_PROVISIONED:
+  "A pending risk-control record must be provisioned before review.",
+
+STAKING_POLICY_NOT_PENDING_REVIEW:
+  "This risk-control record is no longer awaiting review.",
+
+STAKING_POLICY_REVIEW_STALE:
+  "The project stage or global staking policy changed. Review the current risk limits.",
+
+PROJECT_STAKING_STAGE_REQUIRED:
+  "Assign an approved staking stage before provisioning risk controls.",
+
+PROJECT_TREASURY_NOT_CONFIGURED:
+  "Configure an active project treasury and liquidity target before provisioning risk controls.",
 
     // TESTNET STAKING STAGE ADMINISTRATION
     TESTNET_STAKING_STAGE_SUPER_ADMIN_REQUIRED:
