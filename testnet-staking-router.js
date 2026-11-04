@@ -384,6 +384,39 @@ PROJECT_TREASURY_NOT_CONFIGURED:
     // TESTNET STAKING COVERAGE
     TESTNET_STAKING_COVERAGE_UNAVAILABLE:
       "The project's Testnet staking liquidity coverage is unavailable or insufficient."
+        ,
+
+    // TESTNET PROJECT-LEVEL STAKING ENABLEMENT
+    TESTNET_STAKING_ENABLEMENT_FIELDS_REQUIRED:
+      "A Testnet project, enable/disable decision, and valid reason are required.",
+    TESTNET_STAKING_ENABLEMENT_REASON_REQUIRED:
+      "Enter a reason of at least 10 characters and no more than 500 characters.",
+    TESTNET_STAKING_ENABLEMENT_ADMIN_REQUIRED:
+      "Only an active Testnet Super Admin may enable or disable project staking.",
+    TESTNET_STAKING_ENABLEMENT_PROJECT_NOT_FOUND:
+      "The Testnet project could not be found.",
+    TESTNET_STAKING_ENABLEMENT_PROJECT_NOT_APPROVED:
+      "The project is not currently approved in Testnet.",
+    TESTNET_STAKING_ENABLEMENT_MAINNET_APPROVAL_REQUIRED:
+      "The project does not have a verified Mainnet-approved mirror record.",
+    TESTNET_STAKING_ENABLEMENT_RISK_CONTROLS_NOT_APPROVED:
+      "ALBUKHR risk controls must be approved before project staking can be enabled.",
+    TESTNET_STAKING_ENABLEMENT_POLICY_NOT_CONFIGURED:
+      "The global Testnet staking policy is incomplete or invalid.",
+    TESTNET_STAKING_ENABLEMENT_LIMITS_INVALID:
+      "The approved project risk limits are incomplete or do not match the current global policy.",
+    TESTNET_STAKING_ENABLEMENT_TREASURY_NOT_READY:
+      "The project treasury must be active, use the approved global Testnet wallet, and meet its verified liquidity target.",
+    TESTNET_STAKING_ENABLEMENT_OFFERS_NOT_READY:
+      "At least one active owner offer is required, and every active offer must comply with approved durations and reward caps.",
+    TESTNET_STAKING_ENABLEMENT_COVERAGE_NOT_READY:
+      "The project's tracked assets, liquidity buffer, reserve coverage, or outstanding principal do not meet the staking safety checks.",
+    TESTNET_STAKING_ENABLEMENT_PENDING_INTENTS:
+      "This project has unresolved stake-payment intents. Reconcile or cancel them before disabling staking.",
+    TESTNET_STAKING_ENABLEMENT_GUARD_REJECTED:
+      "The database rejected an unexpected change outside the project staking enablement flag.",
+    TESTNET_STAKING_ENABLEMENT_FAILED:
+      "Project staking could not be enabled or disabled. Review the current Testnet policy and try again."
   };
 
   return messages[code] || "An unexpected error occurred. Please try again or contact ALBUKHR support.";
