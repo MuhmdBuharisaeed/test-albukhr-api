@@ -1214,7 +1214,8 @@ router.post("/admin/policy", async (req, res) => {
         project_code: project.project_code,
         name: project.name
       },
-      policy: data || null,
+            policy: data || null,
+      global_staking_policy_active: globalPolicy.staking_policy_active === true,
       provisioning_required: !data,
       can_provision:
         (adminSession.roles || []).includes("super_admin") &&
