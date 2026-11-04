@@ -1191,7 +1191,18 @@ router.post("/admin/policy", async (req, res) => {
       .eq("network", NETWORK)
       .maybeSingle();
 
-    if (error) {
+        if (error) {
+      throw new Error("STAKING_POLICY_READ_FAILED");
+    }
+
+    const { data: globalPolicy, error: globalPolicyError } = await supabase
+      .from("testnet_global_treasury_policy")
+      .select("staking_policy_active")
+      .eq("singleton_id", 1)
+      .eq("network", NETWORK)
+      .maybeSingle();
+
+    if (globalPolicyError || !globalPolicy) {
       throw new Error("STAKING_POLICY_READ_FAILED");
     }
 
