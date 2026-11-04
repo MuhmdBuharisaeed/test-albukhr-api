@@ -1372,6 +1372,122 @@ router.post("/admin/policy/review", async (req, res) => {
   }
 });
 
+    // Project-level enablement is separate from global activation.
+  // This endpoint never changes the global staking policy.
+  router.post("/admin/policy/enablement", async (req, res) => {
+    try {
+      const adminSession = await getTestnetAdminSession(req);
+
+      if (!(adminSession.roles || []).includes("super_admin")) {
+        throw new Error("TESTNET_STAKING_ENABLEMENT_ADMIN_REQUIRED");
+      }
+
+      const projectId = clean(req.body && req.body.projectId);
+      const projectCode = clean(req.body && req.body.projectCode);
+      const enabled = req.body && req.body.enabled;
+      const reason = clean(req.body && req.body.reason);
+
+      if (!projectId || !projectCode || typeof enabled !== "boolean") {
+        throw new Error("TESTNET_STAKING_ENABLEMENT_FIELDS_REQUIRED");
+      }
+
+      if (reason.length < 10 || reason.length > 500) {
+        throw new Error("TESTNET_STAKING_ENABLEMENT_REASON_REQUIRED");
+      }
+
+      const { data: project, error: projectError } = await supabase
+        .from("projects")
+        .select("id,project_code,name,network,status")
+        .eq("id", projectId)
+        .eq("project_code", projectCode)
+        .eq("network", NETWORK)
+        .maybeSingle();
+
+      if (projectError || !project) {
+        throw new Error("TESTNET_STAKING_ENABLEMENT_PROJECT_NOT_FOUND");
+      }
+
+      const { data: globalPolicy, error: globalPolicyError } = await supabase
+        .from("testnet_global_treasury_policy")
+        .select("active,staking_policy_active")
+        .eq("singleton_id", 1)
+        .eq("network", NETWORK)
+        .maybeSingle();
+
+      if (globalPolicyError || !globalPolicy) {
+        throw new Error("STAKING_POLICY_READ_FAILED");
+      }
+
+      const { data, error } = await supabase.rpc(
+        "set_testnet_project_staking_enabled",
+        {
+          p_project_id: project.id,
+          p_admin_session_id: adminSession.id,
+          p_enabled: enabled,
+          p_reason: reason
+        }
+      );
+
+      if (error || !data) {
+        const message = clean(error && error.message);
+
+        const known = [
+          "TESTNET_STAKING_ENABLEMENT_FIELDS_REQUIRED",
+          "TESTNET_STAKING_ENABLEMENT_REASON_REQUIRED",
+          "TESTNET_STAKING_ENABLEMENT_ADMIN_REQUIRED",
+          "TESTNET_STAKING_ENABLEMENT_PROJECT_NOT_FOUND",
+          "TESTNET_STAKING_ENABLEMENT_PROJECT_NOT_APPROVED",
+          "TESTNET_STAKING_ENABLEMENT_MAINNET_APPROVAL_REQUIRED",
+          "TESTNET_STAKING_ENABLEMENT_RISK_CONTROLS_NOT_APPROVED",
+          "TESTNET_STAKING_ENABLEMENT_POLICY_NOT_CONFIGURED",
+          "TESTNET_STAKING_ENABLEMENT_LIMITS_INVALID",
+          "TESTNET_STAKING_ENABLEMENT_TREASURY_NOT_READY",
+          "TESTNET_STAKING_ENABLEMENT_OFFERS_NOT_READY",
+          "TESTNET_STAKING_ENABLEMENT_COVERAGE_NOT_READY",
+          "TESTNET_STAKING_ENABLEMENT_PENDING_INTENTS",
+          "TESTNET_STAKING_ENABLEMENT_GUARD_REJECTED"
+        ];
+
+        const mapped = known.find((code) => message.includes(code));
+
+        console.error("[TESTNET PROJECT STAKING ENABLEMENT RPC]", message);
+
+        throw new Error(
+          mapped || "TESTNET_STAKING_ENABLEMENT_FAILED"
+        );
+      }
+
+      return res.json({
+        success: true,
+        network: NETWORK,
+
+        project: {
+          id: project.id,
+          project_code: project.project_code,
+          name: project.name
+        },
+
+        staking_enabled: data.staking_enabled === true,
+        approval_status: data.approval_status,
+
+        global_treasury_active: globalPolicy.active === true,
+        global_staking_policy_active:
+          globalPolicy.staking_policy_active === true,
+
+        global_activation_still_required:
+          globalPolicy.staking_policy_active !== true
+      });
+
+    } catch (error) {
+      console.error(
+        "[TESTNET PROJECT STAKING ENABLEMENT]",
+        clean(error && error.message)
+      );
+
+      return apiError(res, error);
+    }
+  });
+  
   // Read-only project offer check. Client-provided identity is only a lookup;
   // all authorization and policy reads are revalidated by the database RPC.
   router.post("/offers", async (req, res) => {
