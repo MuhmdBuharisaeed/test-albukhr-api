@@ -1,0 +1,20 @@
+Source baseline used for this patch package
+The source files were fetched from the default main branch of the specified repositories during this session.
+Repository
+Path
+Lines
+Blob SHA
+MuhmdBuharisaeed/test-albukhr-api
+testnet-staking-router.js
+2,243
+25a3eca4f2a1bacd9caf050b1a12d9e136825d59
+MuhmdBuharisaeed/test-albukhr-app
+js/testnet-project-staking-risk-admin.js
+729
+058a155392e12ca4d4cfbac3f06230e7267eaf59
+MuhmdBuharisaeed/test-albukhr-app
+js/testnet-owner-staking.js
+298
+534efe5e3c4995d4dc6843ade724482ed8b5b7b3
+The patcher checks exact fragments and expected occurrence counts. If a repository has moved on from these source snapshots, the script intentionally aborts. Do not weaken those checks to force the patch; reconcile the changed source first.
+GitHub branch-write permission was unavailable to this session (403 Resource not accessible by integration). Therefore this package is a reviewable local patch bundle; it is not a Git commit or deployed release.
