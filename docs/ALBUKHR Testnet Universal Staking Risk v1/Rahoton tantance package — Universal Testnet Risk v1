@@ -1,0 +1,15 @@
+Rahoton tantance package — Universal Testnet Risk v1
+Abubuwan da suka yi PASS
+Database source preflight: an kwatanta snippets 19 da migration zai maye gurbin da ainihin PostgreSQL function definitions. Duka expected counts sun dace (19/19 PASS).
+GitHub source-context verification: an sake ɗauko files uku daga repositories, an tabbatar da hashes/layuka, sannan an tantance mahimman context snippets 21. Duka sun dace (21/21 PASS).
+Patcher Python syntax: python -m py_compile — PASS.
+Node smoke-test syntax: node --check — PASS.
+SQL structural guard checks: an tabbatar migration ya ƙara universal JSONB field, ya kunshi patches ga functions bakwai, ba ya UPDATE projects ko stakes, ba ya goge columns, kuma ba ya sa staking_policy_active=true — PASS.
+ZIP integrity: an gwada archive; testzip() ya dawo babu damaged entry — PASS.
+Abubuwan da ba a gudanar ba
+Ba a aiwatar da SQL migration a Supabase ba.
+Ba a gudanar da postflight SQL a live database ba saboda migration ba a saka ba tukuna.
+Ba a gudanar da Node smoke test a kan patched complete repositories ba; babu local working copies na repositories a wannan runtime.
+Ba a yi GitHub commit ko Render deployment ba. Ƙoƙarin ƙirƙirar feature branch ya samu 403 Resource not accessible by integration.
+Hukuncin release
+Package ɗin ya wuce static/source-context checks, amma ba a ɗauke shi a matsayin deployed ko live-verified release ba. A yi amfani da preflight, source patcher, sannan postflight bisa umarnin implementation guide. Global Testnet staking dole ya ci gaba da zama inactive.
