@@ -1504,60 +1504,195 @@ router.post("/admin/policy/review", async (req, res) => {
   
   // Read-only project offer check. Client-provided identity is only a lookup;
   // all authorization and policy reads are revalidated by the database RPC.
-  router.post("/offers", async (req, res) => {
+    router.post("/offers", async (req, res) => {
     try {
       await getTestnetSession(req);
-      const project = await getApprovedProject(req.body && req.body.projectId, req.body && req.body.projectCode);
+
+      const project = await getApprovedProject(
+        req.body && req.body.projectId,
+        req.body && req.body.projectCode
+      );
+
       const treasury = await getTreasury(project.id);
-      const [termsResult, controlsResult, coverageResult] = await Promise.all([
-        supabase.from("project_staking_terms")
+
+      const [
+        termsResult,
+        controlsResult,
+        coverageResult,
+        globalPolicyResult
+      ] = await Promise.all([
+        supabase
+          .from("project_staking_terms")
           .select("duration_days,min_stake,reward_rate,active")
-          .eq("project_code", project.project_code).eq("network", NETWORK).eq("active", true)
+          .eq("project_code", project.project_code)
+          .eq("network", NETWORK)
+          .eq("active", true)
           .order("duration_days", { ascending: true }),
-        supabase.from("project_staking_risk_controls")
-          .select("staking_enabled,approval_status,minimum_liquidity,max_reward_rate,max_active_principal,capital_reserve_percent,maximum_deployment_percent")
-          .eq("project_id", project.id).eq("network", NETWORK).maybeSingle(),
-        supabase.rpc("get_testnet_staking_coverage", { p_project_id: project.id }),
+
+        supabase
+          .from("project_staking_risk_controls")
+          .select(
+            "staking_enabled,approval_status,minimum_liquidity," +
+            "max_reward_rate,max_active_principal,capital_reserve_percent," +
+            "maximum_deployment_percent,reward_reserve_coverage_percent"
+          )
+          .eq("project_id", project.id)
+          .eq("network", NETWORK)
+          .maybeSingle(),
+
+        supabase.rpc("get_testnet_staking_coverage", {
+          p_project_id: project.id
+        }),
+
+        supabase
+          .from("testnet_global_treasury_policy")
+          .select(
+            "active,staking_policy_active,minimum_project_liquidity," +
+            "staking_minimum_stake_amount," +
+            "staking_reward_reserve_coverage_percent," +
+            "staking_universal_risk_policy"
+          )
+          .eq("singleton_id", 1)
+          .eq("network", NETWORK)
+          .maybeSingle()
       ]);
-      if (termsResult.error || controlsResult.error || coverageResult.error) {
+
+      if (
+        termsResult.error ||
+        controlsResult.error ||
+        coverageResult.error ||
+        globalPolicyResult.error
+      ) {
         throw new Error("STAKING_OFFERS_READ_FAILED");
       }
+
       const control = controlsResult.data;
-      const coverage = Array.isArray(coverageResult.data) ? coverageResult.data[0] : coverageResult.data;
-      const treasuryReady = treasury.status === "active" &&
-        Number(treasury.verified_liquidity) >= Number(treasury.required_liquidity);
-      const policyReady = !!control && control.staking_enabled === true && control.approval_status === "approved";
-      const canStake = policyReady && treasuryReady && !!coverage && coverage.staking_eligible === true;
+      const coverage = Array.isArray(coverageResult.data)
+        ? coverageResult.data[0]
+        : coverageResult.data;
+
+      const globalPolicy = globalPolicyResult.data;
+
+      if (!globalPolicy) {
+        throw new Error("STAKING_OFFERS_READ_FAILED");
+      }
+
+      const universalRiskPolicy =
+        globalPolicy.staking_universal_risk_policy &&
+        typeof globalPolicy.staking_universal_risk_policy === "object" &&
+        !Array.isArray(globalPolicy.staking_universal_risk_policy)
+          ? globalPolicy.staking_universal_risk_policy
+          : null;
+
+      const riskReserve = numeric(
+        universalRiskPolicy &&
+        universalRiskPolicy.capital_reserve_percent
+      );
+
+      const riskDeployment = numeric(
+        universalRiskPolicy &&
+        universalRiskPolicy.maximum_deployment_percent
+      );
+
+      const riskPrincipal = numeric(
+        universalRiskPolicy &&
+        universalRiskPolicy.max_active_principal
+      );
+
+      const universalRiskReady =
+        riskReserve === 50 &&
+        riskDeployment === 25 &&
+        riskPrincipal === 100 &&
+        numeric(globalPolicy.minimum_project_liquidity) === 100 &&
+        numeric(globalPolicy.staking_minimum_stake_amount) === 10 &&
+        numeric(globalPolicy.staking_reward_reserve_coverage_percent) === 100;
+
+      const controlRiskReady =
+        !!control &&
+        numeric(control.capital_reserve_percent) === 50 &&
+        numeric(control.maximum_deployment_percent) === 25 &&
+        numeric(control.max_active_principal) === 100 &&
+        numeric(control.minimum_liquidity) >= 100 &&
+        numeric(control.reward_reserve_coverage_percent) === 100;
+
+      const treasuryReady =
+        clean(treasury.status).toLowerCase() === "active" &&
+        numeric(treasury.verified_liquidity) !== null &&
+        numeric(treasury.required_liquidity) !== null &&
+        numeric(treasury.verified_liquidity) >=
+          numeric(treasury.required_liquidity);
+
+      const policyReady =
+        !!control &&
+        control.staking_enabled === true &&
+        control.approval_status === "approved";
+
+      const canStake =
+        globalPolicy.active === true &&
+        globalPolicy.staking_policy_active === true &&
+        universalRiskReady &&
+        controlRiskReady &&
+        policyReady &&
+        treasuryReady &&
+        !!coverage &&
+        coverage.staking_eligible === true;
+
       const terms = (termsResult.data || []).map((term) => ({
         duration_days: Number(term.duration_days),
         min_stake: Number(term.min_stake),
         reward_rate: Number(term.reward_rate),
         reward_percent: Number(term.reward_rate) * 100,
-        available: policyReady && Number(term.reward_rate) > 0 &&
-          Number(term.reward_rate) <= Number(control.max_reward_rate),
+        available:
+          canStake &&
+          Number(term.reward_rate) > 0 &&
+          Number(term.reward_rate) <= Number(control.max_reward_rate)
       }));
 
       return res.json({
         success: true,
         network: NETWORK,
-        project: { id: project.id, project_code: project.project_code, name: project.name },
+        project: {
+          id: project.id,
+          project_code: project.project_code,
+          name: project.name
+        },
         can_stake: canStake,
-        reason: canStake ? null : "STAKING_POLICY_OR_LIQUIDITY_NOT_READY",
+        reason: canStake
+          ? null
+          : "STAKING_POLICY_OR_UNIVERSAL_RISK_OR_LIQUIDITY_NOT_READY",
         terms,
-        coverage: coverage ? {
-          verified_liquidity_contributed: Number(coverage.verified_liquidity_contributed || 0),
-          liquidity_buffer: Number(coverage.liquidity_buffer || 0),
-          capital_reserve_balance: Number(coverage.capital_reserve_balance || 0),
-          project_operating_balance: Number(coverage.project_operating_balance || 0),
-          reward_reserve_balance: Number(coverage.reward_reserve_balance || 0),
-          total_tracked_assets: Number(coverage.total_tracked_assets || 0),
-          total_liability: Number(coverage.total_liability || 0),
-          coverage_ratio: coverage.coverage_ratio == null ? null : Number(coverage.coverage_ratio),
-          staking_eligible: coverage.staking_eligible === true,
-        } : null,
+        coverage: coverage
+          ? {
+              verified_liquidity_contributed:
+                Number(coverage.verified_liquidity_contributed || 0),
+              liquidity_buffer:
+                Number(coverage.liquidity_buffer || 0),
+              capital_reserve_balance:
+                Number(coverage.capital_reserve_balance || 0),
+              project_operating_balance:
+                Number(coverage.project_operating_balance || 0),
+              reward_reserve_balance:
+                Number(coverage.reward_reserve_balance || 0),
+              total_tracked_assets:
+                Number(coverage.total_tracked_assets || 0),
+              total_liability:
+                Number(coverage.total_liability || 0),
+              coverage_ratio:
+                coverage.coverage_ratio == null
+                  ? null
+                  : Number(coverage.coverage_ratio),
+              staking_eligible:
+                coverage.staking_eligible === true
+            }
+          : null
       });
+
     } catch (error) {
-      console.error("[TESTNET STAKING OFFERS]", clean(error && error.message));
+      console.error(
+        "[TESTNET STAKING OFFERS]",
+        clean(error && error.message)
+      );
+
       return apiError(res, error);
     }
   });
