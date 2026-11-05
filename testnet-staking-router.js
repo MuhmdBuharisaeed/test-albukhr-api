@@ -1876,11 +1876,14 @@ router.post("/admin/policy/review", async (req, res) => {
 
     // These are the globally approved Testnet risk limits.
     // The database validator independently enforces the same exact values.
-    const universalRiskPolicyReady =
+        const universalRiskPolicyReady =
       riskCapitalReserve === 50 &&
       riskMaximumDeployment === 25 &&
-      riskMaximumPrincipal === 100;
-
+      riskMaximumPrincipal === 100 &&
+      minimumProjectLiquidity === 100 &&
+      minimumStake === 10 &&
+      rewardCoveragePercent === 100;
+    
     const treasuryReady =
       !!treasury &&
       clean(treasury.status).toLowerCase() === "active" &&
