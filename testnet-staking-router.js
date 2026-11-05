@@ -1720,29 +1720,24 @@ router.post("/admin/policy/review", async (req, res) => {
         return cap !== null && cap > 0 && cap <= 1;
       });
 
-    const stageCapitalReserve = numberOrNull(
-      stageRule && stageRule.capital_reserve_percent
+        const riskCapitalReserve = numberOrNull(
+      universalRiskPolicy && universalRiskPolicy.capital_reserve_percent
     );
 
-    const stageMaximumDeployment = numberOrNull(
-      stageRule && stageRule.maximum_deployment_percent
+    const riskMaximumDeployment = numberOrNull(
+      universalRiskPolicy && universalRiskPolicy.maximum_deployment_percent
     );
 
-    const stageMaximumPrincipal = numberOrNull(
-      stageRule && stageRule.max_active_principal
+    const riskMaximumPrincipal = numberOrNull(
+      universalRiskPolicy && universalRiskPolicy.max_active_principal
     );
 
-    const stageRuleReady =
-      !!stageRule &&
-      stageCapitalReserve !== null &&
-      stageMaximumDeployment !== null &&
-      stageMaximumPrincipal !== null &&
-      stageCapitalReserve >= 0 &&
-      stageCapitalReserve <= 100 &&
-      stageMaximumDeployment >= 0 &&
-      stageMaximumDeployment <= 100 &&
-      stageCapitalReserve + stageMaximumDeployment <= 100 &&
-      stageMaximumPrincipal > 0;
+    // These are the globally approved Testnet risk limits.
+    // The database validator independently enforces the same exact values.
+    const universalRiskPolicyReady =
+      riskCapitalReserve === 50 &&
+      riskMaximumDeployment === 25 &&
+      riskMaximumPrincipal === 100;
 
     const treasuryReady =
       !!treasury &&
