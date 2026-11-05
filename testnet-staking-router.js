@@ -1265,8 +1265,12 @@ router.post("/admin/policy/provision", async (req, res) => {
       if (message.includes("STAKING_POLICY_ALREADY_EXISTS"))
         throw new Error("STAKING_POLICY_ALREADY_EXISTS");
 
-      if (message.includes("PROJECT_STAKING_STAGE_REQUIRED"))
-        throw new Error("PROJECT_STAKING_STAGE_REQUIRED");
+            if (message.includes("GLOBAL_UNIVERSAL_RISK_POLICY_NOT_CONFIGURED"))
+        throw new Error("GLOBAL_UNIVERSAL_RISK_POLICY_NOT_CONFIGURED");
+      if (message.includes("GLOBAL_UNIVERSAL_RISK_POLICY_INVALID"))
+        throw new Error("GLOBAL_UNIVERSAL_RISK_POLICY_INVALID");
+      if (message.includes("GLOBAL_UNIVERSAL_RISK_POLICY_MUST_MATCH_APPROVED_LIMITS"))
+        throw new Error("GLOBAL_UNIVERSAL_RISK_POLICY_MUST_MATCH_APPROVED_LIMITS");
 
       if (message.includes("TESTNET_STAKING_SUPER_ADMIN_REQUIRED"))
         throw new Error("STAKING_POLICY_SUPER_ADMIN_REQUIRED");
