@@ -2035,10 +2035,6 @@ router.post("/admin/policy/review", async (req, res) => {
         maximum_deployment_percent:
           effectiveMaximumDeployment || 0,
 
-        staking_stage:
-          project.staking_stage || null
-      },
-
       coverage: coverage
         ? {
             verified_liquidity_contributed:
