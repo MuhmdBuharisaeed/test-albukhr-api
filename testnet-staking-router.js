@@ -1786,8 +1786,8 @@ router.post("/admin/policy/review", async (req, res) => {
     // separate investor-staking controls.
     const riskControlsMatchCurrentPolicy =
       !!control &&
-      control.approval_status === "approved" &&
-      stageRuleReady &&
+            control.approval_status === "approved" &&
+      universalRiskPolicyReady &&
       treasuryReady &&
       globalMaximumRewardRate !== null &&
       sameNumber(
