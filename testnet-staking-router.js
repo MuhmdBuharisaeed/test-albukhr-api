@@ -1964,11 +1964,10 @@ router.post("/admin/policy/review", async (req, res) => {
       success: true,
       network: NETWORK,
 
-      project: {
+            project: {
         id: project.id,
         project_code: project.project_code,
-        name: project.name,
-        staking_stage: project.staking_stage || null
+        name: project.name
       },
 
       can_configure: canConfigure,
