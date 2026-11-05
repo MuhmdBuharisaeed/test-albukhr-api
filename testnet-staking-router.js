@@ -346,6 +346,14 @@ STAKING_POLICY_REVIEW_STALE:
 
 PROJECT_STAKING_STAGE_REQUIRED:
   "Assign an approved staking stage before provisioning risk controls.",
+    GLOBAL_UNIVERSAL_RISK_POLICY_NOT_CONFIGURED:
+      "The universal Testnet risk policy is missing or incomplete.",
+
+    GLOBAL_UNIVERSAL_RISK_POLICY_INVALID:
+      "The universal Testnet risk policy failed validation.",
+
+    GLOBAL_UNIVERSAL_RISK_POLICY_MUST_MATCH_APPROVED_LIMITS:
+      "The universal Testnet risk policy must remain at 50% reserve, 25% deployment and 100 PI maximum active principal.",
 
 PROJECT_TREASURY_NOT_CONFIGURED:
   "Configure an active project treasury and liquidity target before provisioning risk controls.",
