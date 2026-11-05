@@ -1,99 +1,174 @@
-Implementation & rollback guide — ALBUKHR Testnet Universal Risk v1
-1. Pre-implementation baseline
-An tabbatar da waɗannan a Testnet Supabase:
-Global policy row: network='testnet', active=false, staking_policy_active=false.
-Current allowed durations: [30,90,180,365,730,1095].
-Current reward rates: 1%, 3%, 6%, 12%, 24%, 36%.
-Current legacy staking_stage_policies has three stage profiles. The migration does not rewrite or delete them.
-9 projects are approved in Testnet; 8 have staking_stage IS NULL; RAHEEM-25 is the only one with a stage.
-At audit time: 0 stakes, 0 stake intents, 0 risk-control rows; 3 owner offer rows, all inactive; 2 verified-liquidity ledger credits (RAHEEM-25 and MAITAGOGO-2457).
-The preflight SQL source-fragment counts were checked against the currently fetched database function definitions; all 19 expected replacements matched.
-The API source fetched for this package was 2,243 lines; the two browser files were 729 and 298 lines. The patcher checks exact source fragments and fails closed on drift.
-2. Files and where to place them
-New migration
-Place:
-supabase/migrations/20261104220000_testnet_universal_staking_risk_profile_v1.sql
-inside the Testnet API repository (not the Mainnet repo).
-Source patcher
-Place:
-patches/apply_testnet_universal_risk_profile_source_patches.py
-at the root of the working folder or run it directly from the ZIP.
-It patches these existing files in place:
-API repo: testnet-staking-router.js (2,243 lines: patch only)
-frontend repo: js/testnet-project-staking-risk-admin.js (729 lines)
-frontend repo: js/testnet-owner-staking.js (298 lines)
-Run from a Python 3 environment:
-python patches/apply_testnet_universal_risk_profile_source_patches.py \
-  --api-root /path/to/test-albukhr-api \
-  --app-root /path/to/test-albukhr-app
-The script first validates every requested change in memory. Only after every context and expected occurrence count passes will it create backups and write the three patched files. Backups are named:
-testnet-staking-router.js.pre-universal-risk-v1.bak
-testnet-project-staking-risk-admin.js.pre-universal-risk-v1.bak
-testnet-owner-staking.js.pre-universal-risk-v1.bak
-Do not delete backups until the patched environment passes verification.
-3. Source patch design
-API router (>1,000 lines)
-The patcher changes only the owner staking offer contract and related error mapping:
-Reads staking_universal_risk_policy rather than indexing staking_stage_policies by project.staking_stage.
-Requires exactly 50 / 25 / 100 when reporting the owner configuration state.
-Compares existing approved risk-control rows against the universal profile.
-Uses universal limits for reserve, deployment and active principal previews.
-Removes the stage field from owner offer lookups and owner offer response.
-Keeps the dedicated /admin/project-stages and /admin/project-stages/set endpoints intact for compatibility. They are no longer a prerequisite for risk provisioning or owner offers.
-Risk Admin UI (<1,000 lines)
-Removes the stage requirement from the canProvision() predicate.
-Displays the universal Testnet risk profile.
-Keeps provisioning pending-only and keeps Super Admin review separate.
-Keeps the treasury-active and positive liquidity target requirements.
-Owner UI (<1,000 lines)
-Removes the stage display and the instruction that the owner must wait for a stage assignment.
-Instructs the owner that universal Testnet risk controls must be provisioned and approved before offers can be configured.
-Does not allow owner-side control approval or staking activation.
-4. Database migration design
-The migration adds one field to public.testnet_global_treasury_policy:
-staking_universal_risk_policy jsonb
-with the exact policy {capital_reserve_percent: 50, maximum_deployment_percent: 25, max_active_principal: 100}.
-It uses an in-session pg_temp source patch helper. For every SQL function, the helper counts the old exact fragment before replacement. If the count differs, it raises an exception and the transaction must roll back. It updates these functions:
-validate_testnet_global_staking_policy()
-get_testnet_staking_coverage(uuid)
-guard_testnet_project_local_staking_policy()
-provision_testnet_project_staking_risk_control(uuid,uuid)
-review_testnet_project_staking_risk_control(uuid,uuid,text)
-update_testnet_project_staking_offer(uuid,text,integer,numeric)
-create_testnet_stake_intent(uuid,text,text,numeric,integer)
-It preserves:
-projects.staking_stage column and its write guard
-set_testnet_project_staking_stage(...) RPC and its audit behaviour
-all three legacy staking_stage_policies JSON profiles
-owner identity checks and approved Testnet project checks
-treasury and liquidity checks
-risk-control pending/review separation
-duration and reward-rate caps
-reward reserve coverage, liability and tracked-assets checks
-global and per-project activation gates
-The migration changes staking_policy_version to at least 3, without changing policy_version, treasury wallet, rewards, fees, duration arrays or liquidity. It does not change active or staking_policy_active from false.
-5. Verification
-Before the migration:
-Run tests/testnet-universal-risk-preflight.sql in the Testnet database.
-Confirm every source-fragment row reports PASS.
-Confirm the singleton policy row exists and both activation flags are false.
-Confirm no new universal field already exists with unexpected content.
-After source patches:
-node tests/testnet-universal-risk-source-contract-smoke.js \
-  /path/to/test-albukhr-api \
-  /path/to/test-albukhr-app
-After the Testnet database migration:
-Run tests/testnet-universal-risk-postflight.sql.
-Confirm it returns without exception and shows treasury_active=false and staking_policy_active=false.
-Confirm the allowed durations, reward rates, minimum stake, minimum liquidity and reward reserve coverage remain unchanged.
-Verify owner offer setup remains separately gated by an approved risk-control row.
-Verify provisioning creates approval_status='pending' with staking_enabled=false.
+# ALBUKHR Testnet Universal Staking Risk v1 — Implementation & rollback guide
+
+## 1. Release boundary
+
+This package applies to **Testnet only**. Do not copy its source patches or SQL migration into the Mainnet repository or Mainnet Supabase project.
+
+The change removes business-lifecycle `staking_stage` as a prerequisite for Testnet risk-control provisioning, owner offer configuration and staking eligibility. It deliberately retains the legacy Stage Manager, `projects.staking_stage`, stage RPCs, stage audit history and legacy stage-policy JSON for compatibility and administration history.
+
+The Universal Testnet risk profile is fixed at:
+
+- Capital reserve: **50%**
+- Maximum deployment: **25%**
+- Maximum active principal: **100 PI**
+
+The migration and source patch do not activate `testnet_global_treasury_policy.active`, `staking_policy_active`, or any project's `staking_enabled`. Global Testnet staking must remain paused until separate explicit governance approval.
+
+## 2. Current source baseline inspected
+
+At the time this release-hardening package was prepared, GitHub `main` contained:
+
+| File | Observed line count | Handling |
+|---|---:|---|
+| API `testnet-staking-router.js` | 2,421 | Minimal in-place patch only; never replace the whole file |
+| App `js/testnet-project-staking-risk-admin.js` | 807 | Exact-context minimal patch |
+| App `js/testnet-owner-staking.js` | 298 | Exact-context minimal patch |
+
+The source patcher checks all five source targets and all exact replacement anchors before writing anything. It also validates that the API router remains over 1,000 lines and both client scripts remain below 1,000 lines.
+
+## 3. Files in this patch package
+
+Copy these package files into the matching repositories, replacing the existing same-path test/helper files where stated:
+
+### Testnet API repository (`test-albukhr-api`)
+
+- Replace `albukhr_testnet_universal_risk_v1/patches/apply_testnet_universal_risk_profile_source_patches.py` with the package version.
+- Replace `tests/testnet-universal-risk-source-contract-smoke.js` with the package version.
+- Replace `docs/ALBUKHR Testnet Universal Staking Risk v1/Implementation & rollback guide — ALBUKHR Testnet Universal Risk v1` with this guide.
+
+### Testnet App repository (`test-albukhr-app`)
+
+- Replace `tests/testnet-staking-risk-admin-ui-smoke.js` with the package version.
+- Replace `tests/owner-staking-ui-contract-smoke.js` with the package version.
+
+The source patcher then changes these five existing source files **in place**:
+
+1. API `testnet-staking-router.js`
+2. App `js/testnet-project-staking-risk-admin.js`
+3. App `js/testnet-owner-staking.js`
+4. App `admin-dashboard.html`
+5. App `project-owner.html`
+
+The two HTML changes only update the cache-busting query strings so browsers fetch the newly patched JavaScript.
+
+## 4. Source patcher safety behaviour
+
+Before writing, the patcher:
+
+1. Reads all five target files.
+2. Verifies each exact source fragment and expected occurrence count.
+3. Builds all patched content in memory.
+4. Confirms that none of the five `.pre-universal-risk-v1.bak` files already exists.
+5. Creates all five backups before changing any source file.
+6. Writes source files atomically. If a write fails, it attempts to restore every original source file from the in-memory originals and leaves the backup files available for inspection.
+
+A source mismatch, missing file, unexpected line-count category or existing backup causes an abort. Do not delete or overwrite an existing backup to force a rerun; inspect the repository state first.
+
+## 5. Run from Codespaces
+
+First ensure both repository working trees are clean and up to date. Do not pull over uncommitted work.
+
+```bash
+git -C /workspaces/test-albukhr-api status --short
+git -C /workspaces/test-albukhr-app status --short
+```
+
+If either command prints modified/untracked files, stop and preserve those changes before continuing. If both are clean, update the clones:
+
+```bash
+git -C /workspaces/test-albukhr-api pull --ff-only origin main
+git -C /workspaces/test-albukhr-app pull --ff-only origin main
+```
+
+Create a feature branch separately in each repository before applying the source changes:
+
+```bash
+git -C /workspaces/test-albukhr-api switch -c fix/universal-risk-release-hardening
+git -C /workspaces/test-albukhr-app switch -c fix/universal-risk-release-hardening
+```
+
+After copying the package helper and smoke tests into their exact repository paths, run the patcher:
+
+```bash
+python3 /workspaces/test-albukhr-api/albukhr_testnet_universal_risk_v1/patches/apply_testnet_universal_risk_profile_source_patches.py \
+  --api-root /workspaces/test-albukhr-api \
+  --app-root /workspaces/test-albukhr-app
+```
+
+Then run all source checks:
+
+```bash
+python3 -m py_compile /workspaces/test-albukhr-api/albukhr_testnet_universal_risk_v1/patches/apply_testnet_universal_risk_profile_source_patches.py
+node --check /workspaces/test-albukhr-api/testnet-staking-router.js
+node --check /workspaces/test-albukhr-app/js/testnet-project-staking-risk-admin.js
+node --check /workspaces/test-albukhr-app/js/testnet-owner-staking.js
+
+node /workspaces/test-albukhr-api/tests/testnet-universal-risk-source-contract-smoke.js \
+  /workspaces/test-albukhr-api \
+  /workspaces/test-albukhr-app
+
+cd /workspaces/test-albukhr-app
+node tests/testnet-staking-risk-admin-ui-smoke.js
+node tests/owner-staking-ui-contract-smoke.js
+
+cd /workspaces/test-albukhr-api
+git diff --check
+
+git -C /workspaces/test-albukhr-api status --short
+git -C /workspaces/test-albukhr-app status --short
+```
+
+Do not commit or deploy if any check fails. Keep all five generated source backups until regression verification is complete.
+
+## 6. Expected source behaviour after patching
+
+- Owner offers use `staking_universal_risk_policy`, not the project's `staking_stage` value.
+- The three universal-risk database error codes are translated into their explicit API codes and friendly messages.
+- Risk Admin provisioning no longer waits for a lifecycle stage. Treasury-active and positive liquidity-target requirements remain.
+- Risk-control provisioning remains pending-only; Super Admin review remains separate.
+- Owner UI no longer displays a required current staking stage or tells the owner to wait for stage assignment.
+- The legacy Admin Stage Manager endpoints remain present.
+- HTML cache versions move to `20261104-universal-risk-v1` for the two updated scripts.
+- No owner/client action can approve controls or turn staking on.
+
+## 7. Database migration gate
+
+**Do not apply the Universal Risk SQL migration until all five source files have been patched locally, all syntax/source tests pass, and the source changes have been reviewed. Do not merge or deploy the new API source before the database migration is applied and postflight passes.**
+
+The current Testnet Supabase preflight was re-run read-only and all **19/19 expected source-fragment checks passed**. At the time of that check, the Universal Risk column was absent, policy version was 2, `active=false`, `staking_policy_active=false`, enabled risk controls were 0, and stakes were 0.
+
+The migration file currently in the API repository is:
+
+`supabase/migrations/20261104220000_testnet_universal_staking_risk_profile_v1.sql`
+
+Its timestamp is later than the database migration versions that had been applied at the time of this audit. Before applying it, reconcile its filename/version with the actual migration execution timestamp and confirm it is the next unapplied Testnet migration. Do not rename an already-applied migration file or create a version mismatch between Git and Supabase history.
+
+Recommended release order:
+
+1. Patch the local source trees and run every syntax/source smoke test. Keep the changes on feature branches; do not merge or deploy the API branch yet.
+2. Reconcile the migration filename/version and apply the SQL migration to **Testnet Supabase only**.
+3. Run `tests/testnet-universal-risk-postflight.sql` against Testnet Supabase. Verify both global activation flags remain false, no projects/risk controls were unexpectedly enabled, and durations, reward rates, minimum stake, liquidity minimum and reward reserve coverage remain unchanged.
+4. Only after postflight passes, commit/review/merge the API source branch. The Testnet API Render service auto-deploys from `main`, so monitor that deployment rather than manually starting a duplicate.
+5. Publish the App branch through its actual frontend hosting service and verify the new HTML cache versions. The frontend host was not identified in the inspected Render workspace.
+
+This order avoids deploying API code that selects `staking_universal_risk_policy` before that database column exists. The database-first interval retains the old stage profile JSON and project stage data, so the current API can continue its existing stage-dependent owner-offer behaviour until the API update is deployed.
+
 Do not run real Pi payments or live stake-intent tests while global staking is inactive.
-6. Rollback
-Source rollback
-Restore each .pre-universal-risk-v1.bak to its original path. Do not restore only one layer; API and both UI files should be rolled back together if the source deployment is reverted.
-Database rollback
-The migration is transactional. If any exact-source patch, validator check or postcondition fails before COMMIT, PostgreSQL must roll back the entire migration. Do not manually drop staking_universal_risk_policy if any updated SQL functions still reference it.
-After a successful commit, rollback must restore the pre-migration SQL definitions for all seven functions from a separately saved baseline (export pg_get_functiondef(...) for each function before running the migration). Only after restoring the original definitions may the new column be removed. The migration package intentionally does not contain a destructive automatic rollback because dropping the column while functions still use it would break Testnet staking reads and offers.
-7. Operational boundary
-This package is Testnet-only. Mainnet must not receive this migration or these frontend/API patches. Global Testnet staking remains paused; a separate explicit governance decision is required to activate it.
+
+## 8. Rollback
+
+### Source rollback
+
+Restore all five `.pre-universal-risk-v1.bak` source files to their exact original paths as one coordinated rollback. Do not roll back only the API or only one browser script. Retain backups until all source and deployment verification is complete.
+
+### Database rollback
+
+The SQL migration is transactional; a failure before `COMMIT` should roll back all its changes. After a successful commit, restore the pre-migration definitions of all seven SQL functions from a saved `pg_get_functiondef(...)` baseline before removing the `staking_universal_risk_policy` column. Do not drop the column while any function still references it. There is intentionally no destructive one-click rollback migration.
+
+## 9. Operational deployment
+
+The Testnet API Render service has automatic deployment enabled from API repository `main`. Merge the API feature branch only after tests pass and review is complete; then monitor the automatic deploy. Do not manually trigger a duplicate deploy unless automatic deployment has failed.
+
+The App repository's hosting target was not identified in the inspected Render workspace. Do not claim the frontend has deployed until its actual hosting service and published asset versions are verified.
+
+**Release status:** package hardening only. No Supabase migration, source deployment, project enablement or global staking activation is performed by this patch package.
