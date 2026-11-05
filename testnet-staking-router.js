@@ -2054,7 +2054,8 @@ router.post("/admin/policy/review", async (req, res) => {
       };
     });
 
-    const policyReadyForStaking =
+        const policyReadyForStaking =
+      globalPolicy.active === true &&
       globalPolicy.staking_policy_active === true &&
       !!control &&
       control.staking_enabled === true &&
