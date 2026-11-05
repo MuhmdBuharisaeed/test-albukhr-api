@@ -2111,7 +2111,9 @@ router.post("/admin/policy/review", async (req, res) => {
         if (message.includes("STAKING_DURATION_NOT_ALLOWED")) throw new Error("STAKING_DURATION_NOT_ALLOWED");
         if (message.includes("STAKING_POLICY_NOT_APPROVED")) throw new Error("STAKING_POLICY_NOT_APPROVED");
         if (message.includes("STAKING_POLICY_REVIEW_STALE")) throw new Error("STAKING_POLICY_REVIEW_STALE");
-        if (message.includes("PROJECT_STAKING_STAGE_REQUIRED")) throw new Error("PROJECT_STAKING_STAGE_REQUIRED");
+                if (message.includes("GLOBAL_UNIVERSAL_RISK_POLICY_NOT_CONFIGURED")) throw new Error("GLOBAL_UNIVERSAL_RISK_POLICY_NOT_CONFIGURED");
+        if (message.includes("GLOBAL_UNIVERSAL_RISK_POLICY_INVALID")) throw new Error("GLOBAL_UNIVERSAL_RISK_POLICY_INVALID");
+        if (message.includes("GLOBAL_UNIVERSAL_RISK_POLICY_MUST_MATCH_APPROVED_LIMITS")) throw new Error("GLOBAL_UNIVERSAL_RISK_POLICY_MUST_MATCH_APPROVED_LIMITS");
         if (message.includes("PROJECT_TREASURY_NOT_CONFIGURED")) throw new Error("PROJECT_TREASURY_NOT_CONFIGURED");
         if (message.includes("GLOBAL_TESTNET_POLICY_NOT_CONFIGURED")) throw new Error("GLOBAL_TESTNET_POLICY_NOT_CONFIGURED");
         if (message.includes("COVERAGE")) throw new Error("STAKING_INTENT_CREATE_FAILED");
