@@ -2167,10 +2167,12 @@ router.post("/admin/policy/review", async (req, res) => {
         capital_reserve_percent:
           effectiveCapitalReserve || 0,
 
-        maximum_deployment_percent:
-          effectiveMaximumDeployment || 0,
+                maximum_deployment_percent:
+          effectiveMaximumDeployment || 0
+      },
 
       coverage: coverage
+        
         ? {
             verified_liquidity_contributed:
               Number(coverage.verified_liquidity_contributed || 0),
