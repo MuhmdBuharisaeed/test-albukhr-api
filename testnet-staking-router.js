@@ -327,6 +327,10 @@ function createTestnetStakingRouter({
       "The admin session is not authorized for this project.",
     STAKING_POLICY_READ_FAILED:
       "The staking policy could not be loaded.",
+        TESTNET_RISK_PROJECTS_READ_FAILED:
+      "Approved Testnet projects could not be loaded for risk-control administration.",
+    TESTNET_RISK_TREASURY_READ_FAILED:
+      "Testnet project treasury information could not be loaded for risk-control administration.",
     STAKING_POLICY_ALREADY_EXISTS:
       "A staking policy record already exists; provisioning did not change it.",
     STAKING_POLICY_PROVISION_FAILED:
