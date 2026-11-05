@@ -1840,7 +1840,7 @@ router.post("/admin/policy/review", async (req, res) => {
     const effectiveCapitalReserve =
       stageRuleReady && controlCapitalReserve !== null
         ? Math.max(
-            stageCapitalReserve,
+                    riskCapitalReserve,
             controlCapitalReserve
           )
         : null;
