@@ -1796,15 +1796,15 @@ router.post("/admin/policy/review", async (req, res) => {
       ) &&
       sameNumber(
         controlCapitalReserve,
-        stageCapitalReserve
+        riskCapitalReserve
       ) &&
       sameNumber(
         controlMaximumDeployment,
-        stageMaximumDeployment
+        riskMaximumDeployment
       ) &&
       sameNumber(
         controlMaximumPrincipal,
-        stageMaximumPrincipal
+        riskMaximumPrincipal
       ) &&
       sameNumber(
         controlMaximumRewardRate,
@@ -1837,28 +1837,19 @@ router.post("/admin/policy/review", async (req, res) => {
 
     // Use the same reserve, deployment and principal
     // limits enforced by the database staking engine.
-    const effectiveCapitalReserve =
-      stageRuleReady && controlCapitalReserve !== null
-        ? Math.max(
-                    riskCapitalReserve,
-            controlCapitalReserve
-          )
+        const effectiveCapitalReserve =
+      universalRiskPolicyReady && controlCapitalReserve !== null
+        ? Math.max(riskCapitalReserve, controlCapitalReserve)
         : null;
 
     const effectiveMaximumDeployment =
-      stageRuleReady && controlMaximumDeployment !== null
-        ? Math.min(
-            stageMaximumDeployment,
-            controlMaximumDeployment
-          )
+      universalRiskPolicyReady && controlMaximumDeployment !== null
+        ? Math.min(riskMaximumDeployment, controlMaximumDeployment)
         : null;
 
     const effectiveMaximumPrincipal =
-      stageRuleReady && controlMaximumPrincipal !== null
-        ? Math.min(
-            stageMaximumPrincipal,
-            controlMaximumPrincipal
-          )
+      universalRiskPolicyReady && controlMaximumPrincipal !== null
+        ? Math.min(riskMaximumPrincipal, controlMaximumPrincipal)
         : null;
 
     const existingTerms = new Map(
@@ -1940,8 +1931,8 @@ router.post("/admin/policy/review", async (req, res) => {
       lockedReason = "STAKING_POLICY_NOT_PROVISIONED";
     } else if (control.approval_status !== "approved") {
       lockedReason = "STAKING_POLICY_NOT_APPROVED";
-    } else if (!stageRuleReady) {
-      lockedReason = "PROJECT_STAKING_STAGE_NOT_CONFIGURED";
+        } else if (!universalRiskPolicyReady) {
+      lockedReason = "GLOBAL_UNIVERSAL_RISK_POLICY_NOT_CONFIGURED";
     } else if (!treasuryReady) {
       lockedReason = "PROJECT_TREASURY_OR_TARGET_NOT_CONFIGURED";
     } else if (!riskControlsMatchCurrentPolicy) {
