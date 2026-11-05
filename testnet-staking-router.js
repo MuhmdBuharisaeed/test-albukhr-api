@@ -1682,16 +1682,12 @@ router.post("/admin/policy/review", async (req, res) => {
         ? globalPolicy.staking_reward_rates_by_duration
         : {};
 
-    const stagePolicies =
-      globalPolicy.staking_stage_policies &&
-      typeof globalPolicy.staking_stage_policies === "object" &&
-      !Array.isArray(globalPolicy.staking_stage_policies)
-        ? globalPolicy.staking_stage_policies
-        : {};
-
-    const stageRule = project.staking_stage
-      ? stagePolicies[project.staking_stage]
-      : null;
+        const universalRiskPolicy =
+      globalPolicy.staking_universal_risk_policy &&
+      typeof globalPolicy.staking_universal_risk_policy === "object" &&
+      !Array.isArray(globalPolicy.staking_universal_risk_policy)
+        ? globalPolicy.staking_universal_risk_policy
+        : null;
 
     const allowedDurations = Array.isArray(
       globalPolicy.allowed_duration_days
