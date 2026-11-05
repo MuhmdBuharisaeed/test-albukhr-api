@@ -1607,7 +1607,7 @@ router.post("/admin/policy/review", async (req, res) => {
         .select(
           "active,minimum_project_liquidity,allowed_duration_days," +
           "staking_policy_active,staking_minimum_stake_amount," +
-          "staking_reward_rates_by_duration,staking_stage_policies," +
+                    "staking_reward_rates_by_duration,staking_universal_risk_policy," +
           "staking_reward_reserve_coverage_percent"
         )
         .eq("singleton_id", 1)
