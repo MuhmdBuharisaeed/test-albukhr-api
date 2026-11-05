@@ -1182,6 +1182,127 @@ function assertAdminProjectScope(adminSession, project) {
  * It never enables staking or approves risk limits.
  */
 
+// List approved Testnet projects for Universal Risk Controls.
+// This endpoint deliberately does not read projects.staking_stage.
+router.post("/admin/risk-projects", async (req, res) => {
+  try {
+    const adminSession = await getTestnetAdminSession(req);
+
+    const roles = Array.isArray(adminSession && adminSession.roles)
+      ? adminSession.roles
+      : [];
+
+    if (!roles.includes("super_admin")) {
+      throw new Error("STAKING_POLICY_SUPER_ADMIN_REQUIRED");
+    }
+
+    const { data: projectRows, error: projectError } =
+      await supabase
+        .from("projects")
+        .select("id,project_code,name")
+        .eq("network", NETWORK)
+        .eq("status", "approved")
+        .order("project_code", { ascending: true })
+        .limit(100);
+
+    if (projectError) {
+      console.error(
+        "[TESTNET RISK PROJECTS READ]",
+        clean(projectError.message)
+      );
+
+      throw new Error("TESTNET_RISK_PROJECTS_READ_FAILED");
+    }
+
+    const projects = Array.isArray(projectRows)
+      ? projectRows
+      : [];
+
+    if (projects.length === 0) {
+      return res.json({
+        success: true,
+        network: NETWORK,
+        projects: []
+      });
+    }
+
+    const projectIds = projects
+      .map((project) => clean(project.id))
+      .filter(Boolean);
+
+    if (projectIds.length === 0) {
+      throw new Error("TESTNET_RISK_PROJECTS_READ_FAILED");
+    }
+
+    const { data: treasuryRows, error: treasuryError } =
+      await supabase
+        .from("project_treasury")
+        .select(
+          "project_id,network,required_liquidity," +
+          "verified_liquidity,status"
+        )
+        .eq("network", NETWORK)
+        .in("project_id", projectIds);
+
+    if (treasuryError) {
+      console.error(
+        "[TESTNET RISK TREASURY READ]",
+        clean(treasuryError.message)
+      );
+
+      throw new Error("TESTNET_RISK_TREASURY_READ_FAILED");
+    }
+
+    const treasuryByProject = new Map();
+
+    (Array.isArray(treasuryRows) ? treasuryRows : [])
+      .forEach((treasury) => {
+        treasuryByProject.set(
+          clean(treasury.project_id),
+          treasury
+        );
+      });
+
+    const result = projects.map((project) => {
+      const treasury = treasuryByProject.get(
+        clean(project.id)
+      ) || null;
+
+      return {
+        id: project.id,
+        project_code: project.project_code,
+        name: project.name,
+
+        verified_liquidity: treasury
+          ? Number(treasury.verified_liquidity || 0)
+          : 0,
+
+        required_liquidity: treasury
+          ? Number(treasury.required_liquidity || 0)
+          : null,
+
+        treasury_status: treasury
+          ? clean(treasury.status) || "unknown"
+          : "Not configured"
+      };
+    });
+
+    return res.json({
+      success: true,
+      network: NETWORK,
+      projects: result
+    });
+
+  } catch (error) {
+    console.error(
+      "[TESTNET ADMIN RISK PROJECTS READ]",
+      clean(error && error.message)
+    );
+
+    return apiError(res, error);
+  }
+});
+
 // Read the current Testnet policy.
 router.post("/admin/policy", async (req, res) => {
   try {
