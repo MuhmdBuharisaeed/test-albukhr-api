@@ -857,6 +857,21 @@ function validatePaymentBasics(payment, options = {}) {
     return data;
     }
 
+      async function assertGlobalTreasuryActiveForNewApproval() {
+    // Admin-initiated liquidity approval must not start a new Pi approval
+    // while the shared Testnet Treasury is disabled.
+    // Owner U2A payment callbacks remain separate so approved projects
+    // can continue funding their required liquidity.
+
+    const policy = await getGlobalTreasuryPolicy();
+
+    if (policy.active !== true) {
+      throw new Error("GLOBAL_TREASURY_NOT_ACTIVE");
+    }
+
+    return policy;
+      }
+  
     function assertPaymentRecipientIsGlobalTreasury(
     payment,
     treasury
