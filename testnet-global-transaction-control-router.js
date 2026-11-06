@@ -127,7 +127,7 @@ function createTestnetGlobalTransactionControlRouter({
         "sub_tier_fee_after_quota,minimum_staker_withdrawal,business_day_timezone," +
         "allowed_duration_days,staking_policy_version,staking_policy_active," +
         "staking_minimum_stake_amount,staking_reward_rates_by_duration," +
-        "staking_stage_policies,staking_reward_reserve_coverage_percent," +
+        "staking_reward_reserve_coverage_percent," +
         "staking_universal_risk_policy,treasury_wallet"
       )
       .eq("singleton_id", 1)
