@@ -368,11 +368,17 @@ BEGIN
         RAISE EXCEPTION USING errcode = '55000', message = 'GLOBAL_TREASURY_PAYMENT_RAILS_NOT_READY';
       END IF;
 
-      -- At least one verified active Testnet project treasury must be available;
-      -- projects still building liquidity do not block the shared Testnet treasury.
+            -- At least one approved Testnet project must have independently
+      -- verified ledger liquidity meeting its required liquidity.
+      -- Cached project_treasury summaries alone are not sufficient.
       IF NOT EXISTS (
         SELECT 1
         FROM public.project_treasury t
+        JOIN public.projects p
+          ON p.id = t.project_id
+         AND p.network = 'testnet'
+         AND p.status = 'approved'
+        CROSS JOIN LATERAL public.get_testnet_staking_coverage(p.id) cv
         WHERE t.network = 'testnet'
           AND t.status = 'active'
           AND trim(coalesce(t.treasury_wallet, '')) = trim(v_policy.treasury_wallet)
@@ -380,6 +386,7 @@ BEGIN
           AND t.verified_liquidity IS NOT NULL
           AND t.required_liquidity >= v_policy.minimum_project_liquidity
           AND t.verified_liquidity >= t.required_liquidity
+          AND coalesce(cv.verified_liquidity_contributed, 0) >= t.required_liquidity
       ) THEN
         RAISE EXCEPTION USING errcode = '55000', message = 'GLOBAL_TREASURY_PAYMENT_RAILS_NOT_READY';
       END IF;
