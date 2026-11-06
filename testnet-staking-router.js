@@ -2426,14 +2426,30 @@ router.post("/admin/policy/review", async (req, res) => {
         p_duration_days: durationDays,
       });
       if (error || !data || !data.id) {
-        console.error("[TESTNET STAKE INTENT RPC]", clean(error && error.message));
-        const message = clean(error && error.message);
-        const mapped = new Error(message.includes("STAKE_INTENT_ALREADY_PENDING") ? "STAKE_INTENT_ALREADY_PENDING" :
-          message.includes("STAKING_NOT_ENABLED") ? "STAKING_NOT_ENABLED_OR_NOT_APPROVED" :
-          message.includes("STAKING_TERM_NOT_ACTIVE") ? "STAKING_TERM_NOT_ACTIVE" :
-          message.includes("LIQUIDITY") || message.includes("COVERAGE") || message.includes("RESERVE") ? "STAKING_INTENT_CREATE_FAILED" :
-          "STAKING_INTENT_CREATE_FAILED");
-        throw mapped;
+  console.error(
+    "[TESTNET STAKE INTENT RPC]",
+    clean(error && error.message)
+  );
+
+  const message = clean(error && error.message);
+
+  const mapped = new Error(
+    message.includes("TESTNET_STAKING_MAX_DEPLOYMENT_EXCEEDED")
+      ? "TESTNET_STAKING_MAX_DEPLOYMENT_EXCEEDED"
+      : message.includes("STAKE_INTENT_ALREADY_PENDING")
+        ? "STAKE_INTENT_ALREADY_PENDING"
+        : message.includes("STAKING_NOT_ENABLED")
+          ? "STAKING_NOT_ENABLED_OR_NOT_APPROVED"
+          : message.includes("STAKING_TERM_NOT_ACTIVE")
+            ? "STAKING_TERM_NOT_ACTIVE"
+            : message.includes("LIQUIDITY") ||
+              message.includes("COVERAGE") ||
+              message.includes("RESERVE")
+              ? "STAKING_INTENT_CREATE_FAILED"
+              : "STAKING_INTENT_CREATE_FAILED"
+  );
+
+  throw mapped;
       }
       return res.json({
         success: true,
