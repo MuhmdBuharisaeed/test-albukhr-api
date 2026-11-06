@@ -526,8 +526,9 @@ BEGIN
         AND c.reward_reserve_coverage_percent >= v_policy.staking_reward_reserve_coverage_percent
         AND t.status = 'active'
         AND trim(coalesce(t.treasury_wallet, '')) = trim(v_policy.treasury_wallet)
-        AND t.required_liquidity >= v_policy.minimum_project_liquidity
+                AND t.required_liquidity >= v_policy.minimum_project_liquidity
         AND t.verified_liquidity >= t.required_liquidity
+        AND coalesce(cv.verified_liquidity_contributed, 0) >= t.required_liquidity
         AND o.duration_days = ANY(v_policy.allowed_duration_days)
         AND o.min_stake >= v_policy.staking_minimum_stake_amount
         AND o.reward_rate > 0
