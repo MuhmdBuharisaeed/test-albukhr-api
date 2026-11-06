@@ -432,6 +432,8 @@ PROJECT_TREASURY_NOT_CONFIGURED:
       "This project has unresolved stake-payment intents. Reconcile or cancel them before disabling staking.",
     TESTNET_STAKING_ENABLEMENT_GUARD_REJECTED:
       "The database rejected an unexpected change outside the project staking enablement flag.",
+    TESTNET_STAKING_MAX_DEPLOYMENT_EXCEEDED:
+  "This stake would exceed the approved Universal Risk maximum-deployment limit.",
     TESTNET_STAKING_ENABLEMENT_FAILED:
       "Project staking could not be enabled or disabled. Review the current Testnet policy and try again."
   };
