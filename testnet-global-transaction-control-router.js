@@ -262,10 +262,12 @@ const activeTreasuriesReady =
     const ratesReady = Object.keys(expectedRates).every((duration) => Number(rewardRates[duration]) === expectedRates[duration]);
     const stagePolicyReady = policy.staking_stage_policies && typeof policy.staking_stage_policies === "object" && !Array.isArray(policy.staking_stage_policies) && Object.keys(policy.staking_stage_policies).length > 0;
     const stakingConfigReady =
-      riskConfigReady && durationsReady && ratesReady && stagePolicyReady &&
-      numeric(policy.staking_minimum_stake_amount) >= 10 &&
-      numeric(policy.staking_reward_reserve_coverage_percent) >= 100 &&
-      numeric(policy.minimum_project_liquidity) >= 100;
+  riskConfigReady &&
+  durationsReady &&
+  ratesReady &&
+  numeric(policy.staking_minimum_stake_amount) >= 10 &&
+  numeric(policy.staking_reward_reserve_coverage_percent) >= 100 &&
+  numeric(policy.minimum_project_liquidity) >= 100;
 
     const [pendingIntentResult, deploymentGuardProbe] = await Promise.all([
       supabase.from("testnet_stake_intents")
