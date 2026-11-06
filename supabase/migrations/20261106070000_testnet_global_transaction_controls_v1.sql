@@ -487,13 +487,9 @@ BEGIN
       RAISE EXCEPTION USING errcode = '55000', message = 'GLOBAL_STAKING_POLICY_CONFIGURATION_INCOMPLETE';
     END IF;
 
-    IF jsonb_typeof(v_policy.staking_stage_policies) IS DISTINCT FROM 'object' THEN
-      RAISE EXCEPTION USING errcode = '55000', message = 'GLOBAL_STAKING_POLICY_CONFIGURATION_INCOMPLETE';
-    END IF;
-
-    IF NOT EXISTS (SELECT 1 FROM jsonb_object_keys(v_policy.staking_stage_policies)) THEN
-      RAISE EXCEPTION USING errcode = '55000', message = 'GLOBAL_STAKING_POLICY_CONFIGURATION_INCOMPLETE';
-    END IF;
+        -- Universal Risk is the activation model.
+    -- Legacy stage policies are retained as metadata but are not
+    -- a prerequisite for global staking activation.
 
     IF EXISTS (
       SELECT 1 FROM public.testnet_stake_intents i
