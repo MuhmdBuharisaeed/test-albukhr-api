@@ -338,11 +338,14 @@ const activeTreasuriesReady =
       if (coverageError) throw new Error("GLOBAL_TRANSACTION_CONTROL_STATUS_READ_FAILED");
       const coverage = Array.isArray(coverageData) ? coverageData[0] : coverageData;
       const coverageReady = Boolean(coverage) &&
-        numeric(coverage.owner_liquidity_available) >= Number(policy.minimum_project_liquidity) &&
-        numeric(coverage.liquidity_buffer) >= Number(policy.minimum_project_liquidity) &&
-        numeric(coverage.total_tracked_assets) >= numeric(coverage.total_liability) &&
-        numeric(coverage.reward_reserve_balance) >=
-          numeric(coverage.outstanding_rewards) * Number(policy.staking_reward_reserve_coverage_percent) / 100;
+  numeric(coverage.owner_liquidity_available) >= Number(policy.minimum_project_liquidity) &&
+  numeric(coverage.liquidity_buffer) >= Number(policy.minimum_project_liquidity) &&
+  numeric(coverage.verified_liquidity_contributed) >=
+    numeric(treasury.required_liquidity) &&
+  numeric(coverage.total_tracked_assets) >= numeric(coverage.total_liability) &&
+  numeric(coverage.reward_reserve_balance) >=
+    numeric(coverage.outstanding_rewards) *
+      Number(policy.staking_reward_reserve_coverage_percent) / 100;
       const noProjectPending = Number(pendingIntentCount || 0) === 0;
 
       if (riskMatches && treasuryMatches && hasOffer && coverageReady && noProjectPending) {
