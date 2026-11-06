@@ -160,15 +160,77 @@ function createTestnetGlobalTransactionControlRouter({
     ]);
 
     const feeTablesReady = !assessmentProbe.error && !feeLedgerProbe.error;
-    const activeRows = Array.isArray(activeTreasuries.data) ? activeTreasuries.data : [];
-    const activeTreasuriesReady = !activeTreasuries.error && activeRows.length > 0 &&
-      activeRows.every((row) => clean(row.treasury_wallet) === clean(policy.treasury_wallet)) &&
-      activeRows.some((row) =>
-        numeric(row.required_liquidity) !== null &&
-        numeric(row.verified_liquidity) !== null &&
-        numeric(row.required_liquidity) >= numeric(policy.minimum_project_liquidity) &&
-        numeric(row.verified_liquidity) >= numeric(row.required_liquidity)
+    const activeRows = Array.isArray(activeTreasuries.data)
+  ? activeTreasuries.data
+  : [];
+
+const activeProjectIds = [
+  ...new Set(
+    activeRows
+      .map((row) => clean(row.project_id))
+      .filter(Boolean)
+  ),
+];
+
+const approvedProjectResult = activeProjectIds.length
+  ? await supabase
+      .from("projects")
+      .select("id")
+      .eq("network", NETWORK)
+      .eq("status", "approved")
+      .in("id", activeProjectIds)
+  : { data: [], error: null };
+
+if (approvedProjectResult.error) {
+  throw new Error("GLOBAL_TRANSACTION_CONTROL_STATUS_READ_FAILED");
+}
+
+const approvedProjectIds = new Set(
+  (approvedProjectResult.data || []).map((row) => clean(row.id))
+);
+
+const treasuryCoverageResults = await Promise.all(
+  activeRows
+    .filter((row) => approvedProjectIds.has(clean(row.project_id)))
+    .map(async (row) => {
+      const { data, error } = await supabase.rpc(
+        "get_testnet_staking_coverage",
+        { p_project_id: row.project_id }
       );
+
+      if (error) {
+        throw new Error("GLOBAL_TRANSACTION_CONTROL_STATUS_READ_FAILED");
+      }
+
+      const coverage = Array.isArray(data) ? data[0] : data;
+
+      return { row, coverage };
+    })
+);
+
+const activeTreasuriesReady =
+  !activeTreasuries.error &&
+  activeRows.length > 0 &&
+  activeRows.every(
+    (row) =>
+      clean(row.treasury_wallet) === clean(policy.treasury_wallet)
+  ) &&
+  treasuryCoverageResults.some(({ row, coverage }) => {
+    const required = numeric(row.required_liquidity);
+    const summaryVerified = numeric(row.verified_liquidity);
+    const ledgerVerified = numeric(
+      coverage && coverage.verified_liquidity_contributed
+    );
+
+    return (
+      required !== null &&
+      summaryVerified !== null &&
+      ledgerVerified !== null &&
+      required >= numeric(policy.minimum_project_liquidity) &&
+      summaryVerified >= required &&
+      ledgerVerified >= required
+    );
+  });
 
     pushCheck(treasuryChecks, "pi_api", "Pi Testnet API and app wallet", treasuryApiReady,
       treasuryApiReady ? "API key and Testnet app wallet are configured." : "PI_API_KEY or PI_TESTNET_APP_WALLET is missing.");
