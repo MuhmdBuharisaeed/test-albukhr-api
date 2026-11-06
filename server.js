@@ -183,6 +183,17 @@ app.use(
   })
 );
 
+/* Testnet-only Super Admin global transaction controls. */
+app.use(
+  "/staking",
+  createTestnetGlobalTransactionControlRouter({
+    supabase,
+    piApiKey: PI_API_KEY,
+    piTestnetAppWallet: process.env.PI_TESTNET_APP_WALLET || "",
+    payoutWalletConfigured: TESTNET_PAYOUT_WALLET_CONFIGURED
+  })
+);
+
 /* Testnet-only Global Treasury outflow fee flow. */
 app.use(
   "/outflow-fee",
