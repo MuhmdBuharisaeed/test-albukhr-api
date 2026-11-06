@@ -11,6 +11,9 @@ const createTestnetLiquidityPaymentRouter =
 const createTestnetStakingRouter =
   require("./testnet-staking-router");
 
+const createTestnetGlobalTransactionControlRouter =
+  require("./testnet-global-transaction-control-router");
+
 const createTestnetOutflowFeeRouter =
   require("./testnet-outflow-fee-router");
 
@@ -72,6 +75,26 @@ const server =
     process.env.PI_HORIZON_URL ||
       "https://api.testnet.minepi.com"
   );
+
+// Validate the Testnet payout keypair once at process startup.
+let TESTNET_PAYOUT_WALLET_CONFIGURED = false;
+
+const CONFIGURED_TESTNET_APP_WALLET = String(
+  process.env.PI_TESTNET_APP_WALLET || ""
+).trim();
+
+if (WALLET_PRIVATE_SEED && CONFIGURED_TESTNET_APP_WALLET) {
+  try {
+    const payoutKeypair = StellarSdk.Keypair.fromSecret(
+      WALLET_PRIVATE_SEED
+    );
+
+    TESTNET_PAYOUT_WALLET_CONFIGURED =
+      payoutKeypair.publicKey() === CONFIGURED_TESTNET_APP_WALLET;
+  } catch (_) {
+    // Keep readiness false if the keypair is invalid.
+  }
+}
 
 app.disable("x-powered-by");
 
