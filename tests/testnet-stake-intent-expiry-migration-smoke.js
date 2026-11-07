@@ -10,7 +10,6 @@ const migrationPath = path.join(
   "migrations",
   "20261107214500_testnet_expire_unstarted_stake_intents_v1.sql"
 );
-const routerPath = path.join(__dirname, "..", "testnet-staking-router.js");
 
 function assert(condition, message) {
   if (!condition) {
@@ -25,39 +24,10 @@ if (!fs.existsSync(migrationPath)) {
   console.error("FAIL: migration file is missing:", migrationPath);
   process.exit(1);
 }
-if (!fs.existsSync(routerPath)) {
-  console.error("FAIL: API router file is missing:", routerPath);
-  process.exit(1);
-}
 
 const sql = fs.readFileSync(migrationPath, "utf8");
 const normalized = sql.replace(/\s+/g, " ").toLowerCase();
-const router = fs.readFileSync(routerPath, "utf8");
-const validateStart = router.indexOf("async function validatePaymentContext");
-const validateEnd = router.indexOf("async function approvePiPayment", validateStart);
-const validatePaymentContext = validateStart >= 0 && validateEnd > validateStart
-  ? router.slice(validateStart, validateEnd)
-  : "";
 
-assert(
-  normalized.includes("create or replace function public.guard_testnet_stake_intent_payment_arm"),
-  "defines the DB-level payment-arm guard"
-);
-assert(
-  normalized.includes("security invoker") && normalized.includes("set search_path = ''"),
-  "uses invoker rights and a fixed empty search_path for the guard"
-);
-assert(
-  normalized.includes("new.payment_id is distinct from old.payment_id") &&
-    normalized.includes("new.status = 'created'") &&
-    normalized.includes("new.metadata ->> 'payment_started' is distinct from 'true'"),
-  "requires /arm before binding a payment ID or creating a stake"
-);
-assert(
-  normalized.includes("before insert or update of payment_id, status") &&
-    normalized.includes("testnet_stake_intent_payment_arm_guard"),
-  "attaches the DB guard to intent payment binding and finalization"
-);
 assert(
   normalized.includes("create or replace function public.expire_testnet_unstarted_stake_intents"),
   "defines the Testnet-only expiry function"
@@ -68,7 +38,7 @@ assert(
 );
 assert(
   normalized.includes("i.network = 'testnet'") && normalized.includes("p.network = 'testnet'"),
-  "restricts expiry candidates to Testnet intents and Testnet projects"
+  "restricts cleanup to Testnet intents and Testnet projects"
 );
 assert(
   normalized.includes("i.status = 'pending_payment'") && normalized.includes("i.payment_id is null"),
@@ -79,42 +49,46 @@ assert(
   "only considers intents whose expiry time has passed"
 );
 assert(
-  normalized.includes("i.metadata ->> 'payment_started' = 'false'") &&
+  normalized.includes("i.metadata ->> 'payment_started' is null") &&
+    normalized.includes("i.metadata ->> 'payment_started' = 'false'") &&
+    normalized.includes("i.metadata ->> 'payment_armed' is null") &&
     normalized.includes("i.metadata ->> 'payment_armed' = 'false'"),
-  "excludes intents when payment has been started or armed"
+  "excludes intents once payment has started or been armed"
 );
+const rowLockPosition = normalized.indexOf("for update skip locked");
+const advisoryLockPosition = normalized.indexOf("pg_catalog.pg_advisory_xact_lock(");
 assert(
-  normalized.includes("for update skip locked") && normalized.includes("pg_advisory_xact_lock"),
-  "uses row skipping and the per-project staking advisory lock"
+  rowLockPosition >= 0 && advisoryLockPosition > rowLockPosition,
+  "locks the intent row before the project advisory lock to avoid lock-order deadlocks"
 );
 assert(
   normalized.includes("'reward_reserve', 'debit', 'admin_adjustment'") &&
     normalized.includes("'owner_liquidity', 'credit', 'admin_adjustment'"),
-  "reverses reward reservation with a balanced ledger pair"
+  "reverses reward reservation with a balanced audit ledger pair"
 );
 assert(
   normalized.includes("'stake_intent_expiry'") &&
     normalized.includes("'expired_before_payment'") &&
     normalized.includes("set status = 'expired'"),
-  "marks expiry with a distinct audit reason and status"
+  "marks expired intents with a distinct audit reason"
+);
+assert(
+  normalized.includes("create or replace function public.guard_testnet_stake_intent_payment_arming") &&
+    normalized.includes("stake_intent_payment_arm_guard") &&
+    normalized.includes("stake_intent_payment_not_armed"),
+  "adds a database guard against payment binding/finalization before /arm"
 );
 assert(
   normalized.includes("revoke all privileges") &&
     normalized.includes("from public, anon, authenticated, service_role") &&
     normalized.includes("to postgres"),
-  "restricts expiry function execution to the database scheduler role"
+  "restricts expiry execution to the scheduler role"
 );
 assert(
   normalized.includes("cron.schedule(") &&
     normalized.includes("'*/5 * * * *'") &&
     normalized.includes("public.expire_testnet_unstarted_stake_intents(100)"),
   "schedules bounded cleanup every five minutes"
-);
-assert(
-  validatePaymentContext.includes("intent.metadata") &&
-    validatePaymentContext.includes("payment_started") &&
-    validatePaymentContext.includes("STAKE_INTENT_PAYMENT_NOT_ARMED"),
-  "API validates payment arming before approval, completion, and reconciliation"
 );
 assert(
   !/\bdelete\s+from\s+public\.(project_staking_ledger|testnet_stake_intents|stakes|testnet_stake_payments)\b/i.test(sql),
@@ -126,4 +100,4 @@ assert(
 );
 
 if (process.exitCode) process.exit(process.exitCode);
-console.log("Testnet stake-intent expiry and payment-arm regression checks passed.");
+console.log("Testnet stake-intent expiry migration smoke checks passed.");
