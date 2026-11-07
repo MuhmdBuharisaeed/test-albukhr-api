@@ -3,19 +3,21 @@ name: ALBUKHR Testnet Stake Intent Expiry Regression
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
       - 'supabase/migrations/20261107214500_testnet_expire_unstarted_stake_intents_v1.sql'
       - 'tests/testnet-stake-intent-expiry-migration-smoke.js'
+      - 'tests/testnet-stake-intent-expiry-api-guard-smoke.js'
+      - 'testnet-staking-router.js'
       - '.github/workflows/testnet-stake-intent-expiry-regression.yml'
 
   pull_request:
-    branches:
-      - main
+    branches: [main]
     paths:
       - 'supabase/migrations/20261107214500_testnet_expire_unstarted_stake_intents_v1.sql'
       - 'tests/testnet-stake-intent-expiry-migration-smoke.js'
+      - 'tests/testnet-stake-intent-expiry-api-guard-smoke.js'
+      - 'testnet-staking-router.js'
       - '.github/workflows/testnet-stake-intent-expiry-regression.yml'
 
   workflow_dispatch:
@@ -29,7 +31,7 @@ concurrency:
 
 jobs:
   migration-regression:
-    name: Testnet intent expiry migration checks
+    name: Testnet intent expiry and payment-arm checks
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -49,11 +51,18 @@ jobs:
 
           test -f supabase/migrations/20261107214500_testnet_expire_unstarted_stake_intents_v1.sql
           test -f tests/testnet-stake-intent-expiry-migration-smoke.js
+          test -f tests/testnet-stake-intent-expiry-api-guard-smoke.js
+          test -f testnet-staking-router.js
 
           echo "Required Testnet files found."
 
       - name: Check smoke-test JavaScript syntax
-        run: node --check tests/testnet-stake-intent-expiry-migration-smoke.js
+        run: |
+          node --check tests/testnet-stake-intent-expiry-migration-smoke.js
+          node --check tests/testnet-stake-intent-expiry-api-guard-smoke.js
 
       - name: Run migration safety regression
         run: node tests/testnet-stake-intent-expiry-migration-smoke.js
+
+      - name: Run API payment-arm regression
+        run: node tests/testnet-stake-intent-expiry-api-guard-smoke.js
