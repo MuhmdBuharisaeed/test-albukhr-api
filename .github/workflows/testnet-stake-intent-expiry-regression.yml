@@ -5,7 +5,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'supabase/migrations/20261107214500_testnet_expire_unstarted_stake_intents_v1.sql'
+      - 'supabase/migrations/20261107231515_testnet_expire_unstarted_stake_intents_v1.sql'
       - 'tests/testnet-stake-intent-expiry-migration-smoke.js'
       - 'tests/testnet-stake-intent-expiry-api-guard-smoke.js'
       - 'testnet-staking-router.js'
@@ -14,7 +14,7 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - 'supabase/migrations/20261107214500_testnet_expire_unstarted_stake_intents_v1.sql'
+      - 'supabase/migrations/20261107231515_testnet_expire_unstarted_stake_intents_v1.sql'
       - 'tests/testnet-stake-intent-expiry-migration-smoke.js'
       - 'tests/testnet-stake-intent-expiry-api-guard-smoke.js'
       - 'testnet-staking-router.js'
@@ -49,7 +49,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          test -f supabase/migrations/20261107214500_testnet_expire_unstarted_stake_intents_v1.sql
+          test -f supabase/migrations/20261107231515_testnet_expire_unstarted_stake_intents_v1.sql
           test -f tests/testnet-stake-intent-expiry-migration-smoke.js
           test -f tests/testnet-stake-intent-expiry-api-guard-smoke.js
           test -f testnet-staking-router.js
