@@ -744,6 +744,17 @@ function assertAdminProjectScope(adminSession, project) {
     }
 
     const intent = await getIntent(metadataIntentId);
+        // Require server-side payment arming before Pi payment processing.
+    if (intent.status === "pending_payment") {
+      const intentMetadata = intent.metadata &&
+        typeof intent.metadata === "object"
+          ? intent.metadata
+          : {};
+
+      if (intentMetadata.payment_started !== true) {
+        throw new Error("STAKE_INTENT_PAYMENT_NOT_ARMED");
+      }
+    }
     const id = paymentId(payment);
     const amount = paymentAmount(payment);
     const duration = Number(metadata.duration_days);
