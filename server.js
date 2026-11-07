@@ -1005,8 +1005,20 @@ app.get(
   }
 );
 
+
 /* ============================================================
    PROTECTED TESTNET INVESTOR DATA
+   ------------------------------------------------------------
+   TESTNET FINANCIAL IDENTITY CONTRACT
+
+   Security requirements:
+   - Valid Testnet session is mandatory.
+   - Investor identity comes from the verified session.
+   - Stakes are restricted to the session pi_uid.
+   - Withdrawals are restricted to the session pi_uid.
+   - All financial reads are restricted to Testnet.
+   - Returned financial rows include pi_uid and network.
+   - Project metadata is restricted to Testnet.
    ============================================================ */
 
 app.get(
@@ -1014,8 +1026,34 @@ app.get(
   requireSession,
   async (req, res) => {
     try {
-      const uid =
-        req.testnetSession.pi_uid;
+      /*
+       * Never accept investor identity from request body,
+       * query parameters or browser-supplied values.
+       *
+       * The authenticated Testnet session is authoritative.
+       */
+
+      const uid = clean(
+        req.testnetSession &&
+        req.testnetSession.pi_uid
+      );
+
+      if (!uid) {
+        return jsonError(
+          res,
+          401,
+          "TESTNET_SESSION_IDENTITY_MISSING",
+          "A valid Testnet investor identity is required."
+        );
+      }
+
+      /*
+       * TESTNET STAKES
+       *
+       * pi_uid and network are deliberately included
+       * in the returned payload because the financial
+       * core validates ownership and network identity.
+       */
 
       const [
         stakesQ,
@@ -1024,7 +1062,7 @@ app.get(
         supabase
           .from("stakes")
           .select(
-            "id,project_id,project_code,amount,duration_days,reward_rate,reward_amount,status,start_at,unlock_at,created_at"
+            "id,pi_uid,network,project_id,project_code,amount,duration_days,reward_rate,reward_amount,status,start_at,unlock_at,created_at"
           )
           .eq(
             "network",
@@ -1041,12 +1079,18 @@ app.get(
             }
           ),
 
+        /*
+         * TESTNET WITHDRAWAL REQUESTS
+         *
+         * The returned rows explicitly include:
+         * pi_uid, network, stake_id, project_id
+         * and project_code.
+         */
+
         supabase
-          .from(
-            "withdrawal_requests"
-          )
+          .from("withdrawal_requests")
           .select(
-            "id,stake_id,project_id,project_code,withdrawal_type,requested_amount,fee_rate,fee_amount,net_amount,status,txid,created_at,reviewed_at"
+            "id,pi_uid,network,stake_id,project_id,project_code,withdrawal_type,requested_amount,fee_rate,fee_amount,net_amount,status,txid,created_at,reviewed_at"
           )
           .eq(
             "network",
@@ -1064,6 +1108,10 @@ app.get(
           )
       ]);
 
+      /*
+       * STAKES QUERY ERROR
+       */
+
       if (stakesQ.error) {
         console.error(
           "[INVESTOR] stakes:",
@@ -1077,6 +1125,10 @@ app.get(
           "Unable to load Testnet stakes."
         );
       }
+
+      /*
+       * WITHDRAWALS QUERY ERROR
+       */
 
       if (withdrawalsQ.error) {
         console.error(
@@ -1098,6 +1150,58 @@ app.get(
       const withdrawals =
         withdrawalsQ.data || [];
 
+      /*
+       * SERVER-SIDE IDENTITY CONTRACT
+       *
+       * Fail closed if Supabase returns a row
+       * with an unexpected identity or network.
+       *
+       * This is an additional safeguard;
+       * it does not replace the database filters.
+       */
+
+      const invalidStake = stakes.some(
+        (row) =>
+          clean(row.pi_uid) !== uid ||
+          clean(row.network) !== "testnet"
+      );
+
+      if (invalidStake) {
+        console.error(
+          "[INVESTOR] Invalid stake identity/network returned."
+        );
+
+        return jsonError(
+          res,
+          500,
+          "STAKE_IDENTITY_CONTRACT_FAILED",
+          "The Testnet stake identity could not be verified."
+        );
+      }
+
+      const invalidWithdrawal = withdrawals.some(
+        (row) =>
+          clean(row.pi_uid) !== uid ||
+          clean(row.network) !== "testnet"
+      );
+
+      if (invalidWithdrawal) {
+        console.error(
+          "[INVESTOR] Invalid withdrawal identity/network returned."
+        );
+
+        return jsonError(
+          res,
+          500,
+          "WITHDRAWAL_IDENTITY_CONTRACT_FAILED",
+          "The Testnet withdrawal identity could not be verified."
+        );
+      }
+
+      /*
+       * FINANCIAL SUMMARY
+       */
+
       const invested =
         stakes.reduce(
           (sum, row) =>
@@ -1113,8 +1217,7 @@ app.get(
           (sum, row) =>
             sum +
             Number(
-              row.reward_amount ||
-                0
+              row.reward_amount || 0
             ),
           0
         );
@@ -1122,17 +1225,21 @@ app.get(
       const active =
         stakes.filter(
           (row) =>
-            row.status ===
-            "active"
+            row.status === "active"
         );
+
+      /*
+       * PROJECT METADATA
+       *
+       * Only projects referenced by this investor's
+       * Testnet stakes are loaded.
+       */
 
       const projectCodes = [
         ...new Set(
           stakes
             .map((row) =>
-              clean(
-                row.project_code
-              )
+              clean(row.project_code)
             )
             .filter(Boolean)
         )
@@ -1140,9 +1247,7 @@ app.get(
 
       let projects = [];
 
-      if (
-        projectCodes.length
-      ) {
+      if (projectCodes.length) {
         const projectsQ =
           await supabase
             .from("projects")
@@ -1174,7 +1279,41 @@ app.get(
 
         projects =
           projectsQ.data || [];
+
+        /*
+         * Ensure every returned project is Testnet
+         * and belongs to a project code in this
+         * investor's own stake records.
+         */
+
+        const allowedProjectCodes =
+          new Set(projectCodes);
+
+        const invalidProject = projects.some(
+          (row) =>
+            clean(row.network) !== "testnet" ||
+            !allowedProjectCodes.has(
+              clean(row.project_code)
+            )
+        );
+
+        if (invalidProject) {
+          console.error(
+            "[INVESTOR] Invalid project network/identity returned."
+          );
+
+          return jsonError(
+            res,
+            500,
+            "PROJECT_IDENTITY_CONTRACT_FAILED",
+            "The Testnet project identity could not be verified."
+          );
+        }
       }
+
+      /*
+       * VERIFIED TESTNET INVESTOR RESPONSE
+       */
 
       return res.json({
         success: true,
@@ -1185,20 +1324,17 @@ app.get(
           pi_uid: uid,
 
           username:
-            req.testnetSession
-              .username ||
+            req.testnetSession.username ||
             null,
 
           wallet_address:
-            req.testnetSession
-              .wallet_address ||
+            req.testnetSession.wallet_address ||
             null
         },
 
         summary: {
           portfolio:
-            invested +
-            earnings,
+            invested + earnings,
 
           invested,
 
@@ -1208,9 +1344,7 @@ app.get(
             new Set(
               active
                 .map((row) =>
-                  clean(
-                    row.project_code
-                  )
+                  clean(row.project_code)
                 )
                 .filter(Boolean)
             ).size,
@@ -1225,6 +1359,7 @@ app.get(
 
         projects
       });
+
     } catch (error) {
       console.error(
         "[INVESTOR]",
