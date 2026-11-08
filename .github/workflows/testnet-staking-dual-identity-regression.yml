@@ -1,0 +1,68 @@
+
+name: ALBUKHR Testnet Staking Dual Identity Regression
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'testnet-staking-router.js'
+      - 'tests/testnet-staking-dual-identity-smoke.js'
+      - 'tests/testnet-stake-intent-recovery-smoke.js'
+      - 'tests/owner-staking-route-contract-smoke.js'
+      - 'tests/owner-sandbox-identity-contract-smoke.js'
+      - '.github/workflows/testnet-staking-dual-identity-regression.yml'
+
+  pull_request:
+    branches: [main]
+    paths:
+      - 'testnet-staking-router.js'
+      - 'tests/testnet-staking-dual-identity-smoke.js'
+      - 'tests/testnet-stake-intent-recovery-smoke.js'
+      - 'tests/owner-staking-route-contract-smoke.js'
+      - 'tests/owner-sandbox-identity-contract-smoke.js'
+      - '.github/workflows/testnet-staking-dual-identity-regression.yml'
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testnet-staking-dual-identity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dual-identity-regression:
+    name: Verify canonical and Pi Testnet identity separation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check JavaScript syntax
+        run: |
+          set -euo pipefail
+          node --check testnet-staking-router.js
+          node --check tests/testnet-staking-dual-identity-smoke.js
+          node --check tests/testnet-stake-intent-recovery-smoke.js
+          node --check tests/owner-staking-route-contract-smoke.js
+          node --check tests/owner-sandbox-identity-contract-smoke.js
+
+      - name: Run dual-identity regression
+        run: node tests/testnet-staking-dual-identity-smoke.js
+
+      - name: Run pending-intent recovery regression
+        run: node tests/testnet-stake-intent-recovery-smoke.js
+
+      - name: Run owner staking route contract
+        run: node tests/owner-staking-route-contract-smoke.js
+
+      - name: Run Sandbox identity contract
+        run: node tests/owner-sandbox-identity-contract-smoke.js
