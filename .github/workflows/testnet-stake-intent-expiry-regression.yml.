@@ -1,0 +1,55 @@
+name: ALBUKHR Testnet Stake Intent Recovery Regression
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'testnet-staking-router.js'
+      - 'tests/testnet-stake-intent-recovery-smoke.js'
+      - '.github/workflows/testnet-stake-intent-recovery-regression.yml'
+
+  pull_request:
+    branches: [main]
+    paths:
+      - 'testnet-staking-router.js'
+      - 'tests/testnet-stake-intent-recovery-smoke.js'
+      - '.github/workflows/testnet-stake-intent-recovery-regression.yml'
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testnet-stake-intent-recovery-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  recovery-regression:
+    name: Testnet pending intent recovery contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check required files
+        run: |
+          set -euo pipefail
+
+          test -f testnet-staking-router.js
+          test -f tests/testnet-stake-intent-recovery-smoke.js
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check testnet-staking-router.js
+          node --check tests/testnet-stake-intent-recovery-smoke.js
+
+      - name: Run Testnet recovery source contract
+        run: node tests/testnet-stake-intent-recovery-smoke.js
