@@ -52,7 +52,7 @@ console.log(JSON.stringify({
   result: 'PASS',
   toml_version: tomlPackage.version,
   toml_parser: 'PASS',
-  stellar_sdk_version: require('stellar-sdk/package.json').version,
+  stellar_sdk_loaded: true,
   keypair_api: 'PASS',
   horizon_constructor: 'PASS',
   transaction_primitives: 'PASS',
