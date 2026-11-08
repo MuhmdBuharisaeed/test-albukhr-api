@@ -1,6 +1,7 @@
 'use strict';
 const assert = require('node:assert/strict');
 const Module = require('node:module');
+const path = require('node:path');
 const originalLoad = Module._load;
 const routes = new Map();
 const expressStub = { Router() { return { post(path, handler) { routes.set(`POST ${path}`, handler); }, get(path, handler) { routes.set(`GET ${path}`, handler); } }; } };
@@ -8,7 +9,8 @@ Module._load = function(request, parent, isMain) {
   if (request === 'express') return expressStub;
   return originalLoad.call(this, request, parent, isMain);
 };
-const createRouter = require('./testnet-staking-router.js');
+const routerPath = path.join(__dirname, '..', 'testnet-staking-router.js');
+const createRouter = require(routerPath);
 Module._load = originalLoad;
 
 const calls = [];
@@ -93,7 +95,7 @@ function makeRes() {
   assert.equal(res.statusCode, 409, 'unarmed created intent is rejected before Pi approval');
   assert.equal(res.body.error, 'STAKE_INTENT_PAYMENT_NOT_ARMED');
 
-  const source = require('node:fs').readFileSync('./testnet-staking-router.js', 'utf8');
+  const source = require('node:fs').readFileSync(routerPath, 'utf8');
   assert(!/if\s+intent\.pi_uid/.test(source), 'malformed if syntax removed');
   assert(!/if\s*\(p_pi_uid:/.test(source), 'malformed ownership condition removed');
   assert(!/p_pi_uid:\s*clean\(piUser\.uid\)/.test(source), 'Sandbox UID is not passed as canonical RPC identity');
