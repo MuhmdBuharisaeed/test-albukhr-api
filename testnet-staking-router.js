@@ -276,6 +276,11 @@ function createTestnetStakingRouter({
       "The staking intent could not be cancelled. Please reconcile its current payment status.",
     STAKE_INTENT_FINALIZATION_FAILED:
       "The payment was verified, but the stake needs safe reconciliation. Do not make a second payment.",
+        STAKE_INTENT_RECOVERY_CONFLICT:
+      "More than one pending Testnet stake intent exists for this project. Contact ALBUKHR Testnet admin before continuing.",
+
+    STAKE_INTENT_RECOVERY_READ_FAILED:
+      "The pending Testnet stake intent could not be retrieved. No new payment should be started until recovery is checked.",
 
     // STAKING OPERATIONS
     STAKING_OFFERS_READ_FAILED:
