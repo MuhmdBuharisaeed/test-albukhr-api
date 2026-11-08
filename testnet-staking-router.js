@@ -2792,7 +2792,7 @@ router.post("/admin/policy/review", async (req, res) => {
       const intentId = clean(metadata.stake_intent_id || (req.body && req.body.intentId));
       if (!intentId) throw new Error("STAKE_INTENT_MISMATCH");
       const intent = await getIntent(intentId);
-      if (intent.pi_uid !== clean(piUser.uid) ||
+      if (p_pi_uid: clean(session.pi_uid) ||
           intent.project_id !== clean(metadata.project_id) ||
           intent.project_code !== clean(metadata.project_code)) {
         throw new Error("STAKE_INTENT_MISMATCH");
@@ -2852,7 +2852,7 @@ router.post("/admin/policy/review", async (req, res) => {
       const id = clean(req.body && req.body.paymentId);
       if (!intentId) throw new Error("STAKE_INTENT_ID_REQUIRED");
       const intent = await getIntent(intentId);
-      if (intent.pi_uid !== clean(piUser.uid)) throw new Error("STAKE_INTENT_MISMATCH");
+      if (p_pi_uid: clean(session.pi_uid)) throw new Error("STAKE_INTENT_MISMATCH");
 
       if (id) {
         const payment = await getPayment(id);
