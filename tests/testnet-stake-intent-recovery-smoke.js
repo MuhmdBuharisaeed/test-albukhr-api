@@ -1,41 +1,38 @@
 'use strict';
 
-// Run from test-albukhr-app repository root:
-// node tests/testnet-staking-recovery-client-smoke.js
+// Run from test-albukhr-api repository root:
+// node tests/testnet-stake-intent-recovery-smoke.js
 const fs = require('node:fs');
 const assert = require('node:assert/strict');
-const client = fs.readFileSync('js/testnet-staking-payment-client.js', 'utf8');
-const ui = fs.readFileSync('js/testnet-staking.js', 'utf8');
+const source = fs.readFileSync('testnet-staking-router.js', 'utf8');
 
-assert.match(client, /async function restorePendingStake\(project\)/,
-  'client defines project-scoped recovery');
-assert.match(client, /request\("pending"/,
-  'client calls pending-intent endpoint');
-assert.match(client, /paymentLaunched:\s*paymentArmed\s*\|\|\s*Boolean\(paymentId\)/,
-  'restored armed intent is conservatively considered possibly launched');
-assert.match(client, /if \(pendingIntent\.paymentLaunched\)/,
-  'client rejects duplicate payment launch');
-assert.match(client, /restorePendingStake:\s*restorePendingStake/,
-  'client exports recovery method');
-assert.match(client, /await authenticate\(\);[\s\S]*?request\("cancel"/,
-  'recovered unarmed intent re-authenticates before cancellation');
-assert.doesNotMatch(client, /\blocalStorage\b|\bsessionStorage\b/,
-  'does not add browser storage');
+const startToken = 'router.post("/pending", async (req, res) => {';
+const endToken = 'router.post("/intent", async (req, res) => {';
+const start = source.indexOf(startToken);
+assert.ok(start >= 0, 'pending recovery route exists');
+const end = source.indexOf(endToken, start + startToken.length);
+assert.ok(end > start, 'pending recovery route ends before intent creation route');
+const route = source.slice(start, end);
 
-assert.match(ui, /"restorePendingStake"/,
-  'UI checks recovery method contract');
-assert.match(ui, /intentRecoveryOnly/,
-  'recovered armed modal can be dismissed without cancellation');
-assert.match(ui, /Reservation expired/ ,
-  'expired unarmed recovery is not offered a new payment');
-assert.match(ui, /Admin reconciliation required/,
-  'ambiguous armed intent is not shown as safe to pay again');
+assert.match(route, /getTestnetSession\(req\)/, 'requires validated Testnet session');
+assert.match(route, /session\s*&&\s*session\.pi_uid/, 'uses session-bound Pi UID');
+assert.match(route, /\.eq\("network", NETWORK\)/, 'filters Testnet network');
+assert.match(route, /\.eq\("pi_uid", piUid\)/, 'filters authenticated owner');
+assert.match(route, /\.eq\("project_id", projectId\)/, 'filters project ID');
+assert.match(route, /\.eq\("project_code", projectCode\)/, 'filters project code');
+assert.match(route, /\.eq\("status", "pending_payment"\)/, 'returns only pending intents');
+assert.match(route, /\.limit\(2\)/, 'detects ambiguous duplicate pending intents');
+assert.match(route, /STAKE_INTENT_RECOVERY_CONFLICT/, 'fails closed on ambiguous results');
+assert.match(route, /payment_armed:\s*metadata\.payment_started\s*===\s*true/, 'returns only armed boolean');
+assert.doesNotMatch(route, /\.update\(|\.insert\(|\.delete\(/, 'endpoint is read-only');
+assert.doesNotMatch(route, /metadata:\s*row\.metadata/, 'does not expose raw metadata');
+assert.doesNotMatch(route, /pi_uid:\s*row\.pi_uid/, 'does not expose Pi UID');
 
 console.log(JSON.stringify({
   result: 'PASS',
-  recovery_client: true,
-  duplicate_payment_guard: true,
-  recovered_unarmed_cancel_auth: true,
-  armed_reserve_auto_release: false,
-  local_storage_added: false
+  recovery_route: true,
+  testnet_isolation: true,
+  session_owner_filter: true,
+  database_writes: false,
+  payment_launched: false
 }, null, 2));
