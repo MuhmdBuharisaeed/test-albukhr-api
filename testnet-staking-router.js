@@ -900,7 +900,7 @@ function assertAdminProjectScope(adminSession, project) {
       payment_id: id,
       project_id: context.intent.project_id,
       project_code: context.intent.project_code,
-      payer_pi_uid: clean(piUser.uid),
+      payer_pi_uid: clean(context.intent.pi_uid),
       amount: Number(context.intent.amount),
       recipient_wallet: context.treasury.treasury_wallet,
       network: NETWORK,
