@@ -1,0 +1,96 @@
+name: ALBUKHR Testnet API Dependency Security Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testnet-api-dependency-audit
+  cancel-in-progress: false
+
+jobs:
+  dependency-audit:
+    name: Resolve and audit Testnet API dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Testnet API repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Resolve dependencies without lifecycle scripts
+        shell: bash
+        env:
+          npm_config_ignore_scripts: 'true'
+        run: |
+          set -euo pipefail
+          npm install --ignore-scripts --no-audit --no-fund
+          test -f package-lock.json
+          echo 'Resolved dependency lock generated for audit.'
+
+      - name: Run npm security audit and retain full JSON
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          npm audit --json > npm-audit.json
+          audit_exit=$?
+          printf '%s\n' "$audit_exit" > npm-audit-exit-code.txt
+          set -e
+
+          node <<'NODE'
+          const fs = require('node:fs');
+          const data = JSON.parse(fs.readFileSync('npm-audit.json', 'utf8'));
+          const counts = data.metadata && data.metadata.vulnerabilities
+            ? data.metadata.vulnerabilities
+            : {};
+          const rows = Object.entries(data.vulnerabilities || {}).map(([name, item]) => ({
+            package: name,
+            severity: item.severity,
+            direct: item.isDirect,
+            range: item.range,
+            fixAvailable: item.fixAvailable,
+            via: (item.via || []).map(v => typeof v === 'string' ? v : ({
+              title: v.title,
+              url: v.url,
+              range: v.range,
+              severity: v.severity
+            }))
+          }));
+          const summary = {
+            audit_exit_code: Number(fs.readFileSync('npm-audit-exit-code.txt', 'utf8').trim()),
+            vulnerability_counts: counts,
+            affected_packages: rows
+          };
+          fs.writeFileSync('npm-audit-summary.json', JSON.stringify(summary, null, 2));
+          console.log(JSON.stringify(summary, null, 2));
+          NODE
+
+      - name: Save resolved dependency tree
+        if: always()
+        shell: bash
+        run: |
+          npm ls --all --json > npm-dependency-tree.json 2> npm-ls-errors.txt || true
+
+      - name: Upload dependency audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: albukhr-testnet-api-dependency-audit
+          path: |
+            package.json
+            package-lock.json
+            npm-audit.json
+            npm-audit-summary.json
+            npm-audit-exit-code.txt
+            npm-dependency-tree.json
+            npm-ls-errors.txt
+          if-no-files-found: warn
+          retention-days: 14
