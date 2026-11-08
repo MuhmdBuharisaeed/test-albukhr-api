@@ -12,5 +12,10 @@
     "cors": "^2.8.5",
     "express": "^4.18.2",
     "stellar-sdk": "^13.3.0"
+  },
+  "overrides": {
+    "stellar-sdk": {
+      "toml": "5.0.1"
+    }
   }
 }
