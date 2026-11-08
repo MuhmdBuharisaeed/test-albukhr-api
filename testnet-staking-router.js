@@ -454,7 +454,9 @@ PROJECT_TREASURY_NOT_CONFIGURED:
 
     const { data, error } = await supabase
       .from("testnet_sessions")
-      .select("id,pi_uid,username,wallet_address,network,expires_at,revoked_at")
+      .select(
+  "id,pi_uid,testnet_pi_uid,username,wallet_address,network,expires_at,revoked_at"
+)
       .eq("session_hash", hashToken(token))
       .eq("network", NETWORK)
       .maybeSingle();
