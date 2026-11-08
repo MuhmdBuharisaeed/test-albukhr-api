@@ -2606,7 +2606,7 @@ router.post("/admin/policy/review", async (req, res) => {
       const { data, error } = await supabase.rpc("create_testnet_stake_intent", {
         p_project_id: projectId,
         p_project_code: projectCode,
-        p_pi_uid: clean(piUser.uid),
+        p_pi_uid: clean(session.pi_uid),
         p_amount: amount,
         p_duration_days: durationDays,
       });
