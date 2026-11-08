@@ -1,0 +1,100 @@
+name: ALBUKHR Testnet API TOML Security Override Regression
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'server.js'
+      - 'tests/testnet-stellar-sdk-toml-override-smoke.js'
+      - '.github/workflows/testnet-api-toml-override-regression.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'server.js'
+      - 'tests/testnet-stellar-sdk-toml-override-smoke.js'
+      - '.github/workflows/testnet-api-toml-override-regression.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testnet-api-toml-override-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-regression:
+    name: Resolve TOML override and verify Stellar SDK compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Testnet API repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies without lifecycle scripts
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Verify the resolved TOML version
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ls toml --all
+          node -e "const p=require('toml/package.json'); if(p.version!=='5.0.1') { console.error('Unexpected toml version:',p.version); process.exit(1); }"
+
+      - name: Check JavaScript syntax
+        run: node --check tests/testnet-stellar-sdk-toml-override-smoke.js
+
+      - name: Run Stellar SDK and TOML compatibility smoke test
+        run: node tests/testnet-stellar-sdk-toml-override-smoke.js
+
+      - name: Audit dependencies and retain evidence
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          npm audit --json > npm-audit.json
+          audit_exit=$?
+          printf '%s\n' "$audit_exit" > npm-audit-exit-code.txt
+          set -e
+
+          node <<'NODE'
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync('npm-audit.json', 'utf8'));
+          const vulnerabilities = report.vulnerabilities || {};
+          const affectedTomlChain = ['toml', 'stellar-sdk'].filter(name =>
+            Object.prototype.hasOwnProperty.call(vulnerabilities, name)
+          );
+          const counts = report.metadata?.vulnerabilities || {};
+          const result = {
+            audit_exit_code: Number(fs.readFileSync('npm-audit-exit-code.txt', 'utf8').trim()),
+            vulnerability_counts: counts,
+            toml_or_stellar_sdk_still_flagged: affectedTomlChain
+          };
+          fs.writeFileSync('npm-audit-summary.json', JSON.stringify(result, null, 2));
+          console.log(JSON.stringify(result, null, 2));
+          if (affectedTomlChain.length) process.exitCode = 1;
+          NODE
+
+      - name: Upload dependency verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: albukhr-testnet-api-toml-override-verification
+          path: |
+            package.json
+            package-lock.json
+            npm-audit.json
+            npm-audit-summary.json
+            npm-audit-exit-code.txt
+          if-no-files-found: warn
+          retention-days: 14
