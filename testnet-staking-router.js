@@ -818,7 +818,7 @@ function assertAdminProjectScope(adminSession, project) {
     const amount = paymentAmount(payment);
     const duration = Number(metadata.duration_days);
 
-    if (intent.pi_uid !== clean(piUser.uid) ||
+    if intent.pi_uid !== clean(session.pi_uid) ||
         intent.project_id !== clean(metadata.project_id) ||
         intent.project_code !== clean(metadata.project_code) ||
         Number(intent.duration_days) !== duration ||
