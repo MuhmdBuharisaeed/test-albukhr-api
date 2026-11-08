@@ -2591,7 +2591,8 @@ router.post("/admin/policy/review", async (req, res) => {
 
   router.post("/intent", async (req, res) => {
     try {
-      const { session, piUser } = await validateSessionAndPiIdentity(req);
+      const { session } =
+  await validateSessionAndPiIdentity(req);
       const projectId = clean(req.body && req.body.projectId);
       const projectCode = clean(req.body && req.body.projectCode);
       const amount = numeric(req.body && req.body.amount);
