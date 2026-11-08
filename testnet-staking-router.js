@@ -374,6 +374,12 @@ PROJECT_STAKING_STAGE_REQUIRED:
 PROJECT_TREASURY_NOT_CONFIGURED:
   "Configure an active project treasury and liquidity target before provisioning risk controls.",
 
+OWNER_IDENTITY_LOOKUP_FAILED:
+  "ALBUKHR could not verify the identity link. Please try again later.",
+
+OWNER_SANDBOX_IDENTITY_NOT_LINKED:
+  "Your Pi Testnet account is not linked to this ALBUKHR Testnet account.",
+
     // TESTNET STAKING STAGE ADMINISTRATION
     TESTNET_STAKING_STAGE_SUPER_ADMIN_REQUIRED:
       "Only a Testnet super admin can assign or change a project's staking stage.",
