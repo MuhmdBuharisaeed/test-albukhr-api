@@ -2665,7 +2665,7 @@ router.post("/admin/policy/review", async (req, res) => {
       if (clean(session.pi_uid) !== clean(piUser.uid)) throw new Error("PI_USER_SESSION_MISMATCH");
       const { data, error } = await supabase.rpc("arm_testnet_stake_intent_payment", {
         p_intent_id: intentId,
-        p_pi_uid: clean(piUser.uid)
+        p_pi_uid: clean(session.pi_uid),
       });
       if (error || !data || !data.id) {
         const message = clean(error && error.message);
