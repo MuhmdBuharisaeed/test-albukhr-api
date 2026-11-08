@@ -792,8 +792,7 @@ function assertAdminProjectScope(adminSession, project) {
   async function validatePaymentContext(payment, session, piUser, expectedIntentId) {
     validatePaymentBasics(payment);
     validatePaymentUser(payment, piUser);
-    if (clean(session.pi_uid) !== clean(piUser.uid)) throw new Error("PI_USER_SESSION_MISMATCH");
-
+    
     const metadata = paymentMetadata(payment);
     if (clean(metadata.network).toLowerCase() !== NETWORK || clean(metadata.action) !== "stake") {
       throw new Error("PI_PAYMENT_DIRECTION_INVALID");
