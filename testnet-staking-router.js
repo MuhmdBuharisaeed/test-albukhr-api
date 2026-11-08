@@ -2695,7 +2695,7 @@ router.post("/admin/policy/review", async (req, res) => {
       if (context.intent.status !== "created") {
         const { error: bindError } = await supabase.rpc("bind_testnet_stake_intent_payment", {
           p_intent_id: context.intent.id,
-          p_pi_uid: clean(piUser.uid),
+          p_pi_uid: clean(session.pi_uid)
           p_payment_id: id,
         });
         if (bindError) {
@@ -2732,7 +2732,7 @@ router.post("/admin/policy/review", async (req, res) => {
       if (context.intent.status !== "created") {
         const { data: bound, error: bindError } = await supabase.rpc("bind_testnet_stake_intent_payment", {
           p_intent_id: context.intent.id,
-          p_pi_uid: clean(piUser.uid),
+          p_pi_uid: clean(session.pi_uid)
           p_payment_id: id,
         });
         if (bindError || !bound) throw new Error("STAKE_INTENT_BIND_FAILED");
@@ -2802,7 +2802,7 @@ router.post("/admin/policy/review", async (req, res) => {
       if (status.cancelled === true || status.user_cancelled === true) {
         const { data, error } = await supabase.rpc("cancel_testnet_stake_intent", {
           p_intent_id: intent.id,
-          p_pi_uid: clean(piUser.uid),
+          p_pi_uid: clean(session.pi_uid)
           p_payment_id: id,
         });
         if (error || !data) throw new Error("STAKE_INTENT_CANCEL_FAILED");
@@ -2868,7 +2868,7 @@ router.post("/admin/policy/review", async (req, res) => {
 
       const { data, error } = await supabase.rpc("cancel_testnet_stake_intent", {
         p_intent_id: intentId,
-        p_pi_uid: clean(piUser.uid),
+        p_pi_uid: clean(session.pi_uid)
         p_payment_id: id || null,
       });
       if (error || !data) throw new Error("STAKE_INTENT_CANCEL_FAILED");
