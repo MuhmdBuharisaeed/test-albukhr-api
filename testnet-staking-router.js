@@ -97,6 +97,7 @@ OWNER_SANDBOX_IDENTITY_NOT_LINKED: 403,
   STAKE_INTENT_ALREADY_PENDING: 409,
   STAKE_INTENT_ALREADY_BOUND_TO_PAYMENT: 409,
   STAKE_INTENT_EXPIRED: 409,
+  STAKE_INTENT_PAYMENT_NOT_ARMED: 409,
   STAKE_INTENT_BIND_FAILED: 409,
   STAKE_INTENT_CANCEL_FAILED: 409,
   STAKE_INTENT_FINALIZATION_FAILED: 409,
@@ -107,6 +108,10 @@ OWNER_SANDBOX_IDENTITY_NOT_LINKED: 403,
   STAKING_OFFERS_READ_FAILED: 500,
   STAKING_COVERAGE_READ_FAILED: 500,
   STAKING_INTENT_CREATE_FAILED: 409,
+  STAKING_OFFER_FIELDS_REQUIRED: 400,
+  STAKING_NOT_ENABLED_OR_NOT_APPROVED: 409,
+  STAKING_TERM_NOT_ACTIVE: 409,
+  PROJECT_OWNER_ACCESS_DENIED: 403,
   TESTNET_STAKING_MAX_DEPLOYMENT_EXCEEDED: 409,
   STAKE_PAYMENT_READ_FAILED: 500,
   STAKE_PAYMENT_RECORD_MISMATCH: 409,
@@ -274,6 +279,8 @@ OWNER_SANDBOX_IDENTITY_NOT_LINKED: 403,
       "This staking intent is already linked to another Pi payment.",
     STAKE_INTENT_EXPIRED:
       "This staking intent has expired. Create a new staking request.",
+    STAKE_INTENT_PAYMENT_NOT_ARMED:
+      "The staking request has not been armed for Pi payment. Start the payment through the ALBUKHR Testnet flow.",
     STAKE_INTENT_BIND_FAILED:
       "The Pi payment could not be safely linked to the staking intent.",
     STAKE_INTENT_CANCEL_FAILED:
@@ -293,6 +300,12 @@ OWNER_SANDBOX_IDENTITY_NOT_LINKED: 403,
       "The project's staking liquidity coverage could not be verified.",
     STAKING_INTENT_CREATE_FAILED:
       "The staking offer cannot be reserved under current ALBUKHR policy or liquidity coverage.",
+    STAKING_OFFER_FIELDS_REQUIRED:
+      "A valid staking duration and reward rate are required.",
+    STAKING_NOT_ENABLED_OR_NOT_APPROVED:
+      "Staking is not enabled for this approved Testnet project.",
+    STAKING_TERM_NOT_ACTIVE:
+      "The selected staking term is not currently active for this project.",
     STAKE_PAYMENT_READ_FAILED:
       "The staking payment record could not be retrieved.",
     STAKE_PAYMENT_RECORD_MISMATCH:
@@ -803,27 +816,36 @@ function assertAdminProjectScope(adminSession, project) {
     }
 
     const intent = await getIntent(metadataIntentId);
-        // Require server-side payment arming before Pi payment processing.
-    if (intent.status === "pending_payment") {
-      const intentMetadata = intent.metadata &&
-        typeof intent.metadata === "object"
-          ? intent.metadata
-          : {};
-
-      if (intentMetadata.payment_started !== true) {
-        throw new Error("STAKE_INTENT_PAYMENT_NOT_ARMED");
-      }
+        // A payment must never be processed against an unarmed or stale intent.
+    // The /arm endpoint is the only route that moves a created intent into
+    // pending_payment and records payment_started on the server.
+    if (intent.status === "created") {
+      throw new Error("STAKE_INTENT_PAYMENT_NOT_ARMED");
     }
+    if (intent.status !== "pending_payment") {
+      throw new Error("STAKE_INTENT_NOT_PENDING");
+    }
+
+    const intentMetadata =
+      intent.metadata && typeof intent.metadata === "object"
+        ? intent.metadata
+        : {};
+
+    if (intentMetadata.payment_started !== true) {
+      throw new Error("STAKE_INTENT_PAYMENT_NOT_ARMED");
+    }
+
     const id = paymentId(payment);
     const amount = paymentAmount(payment);
     const duration = Number(metadata.duration_days);
 
-    if intent.pi_uid !== clean(session.pi_uid) ||
-        intent.project_id !== clean(metadata.project_id) ||
-        intent.project_code !== clean(metadata.project_code) ||
-        Number(intent.duration_days) !== duration ||
-        Math.abs(Number(intent.amount) - amount) > 0.0000001 ||
-        Math.abs(Number(intent.amount) - Number(payment.amount)) > 0.0000001) {
+    if (
+      clean(intent.pi_uid) !== clean(session && session.pi_uid) ||
+      clean(intent.project_id) !== clean(metadata.project_id) ||
+      clean(intent.project_code) !== clean(metadata.project_code) ||
+      Number(intent.duration_days) !== duration ||
+      Math.abs(Number(intent.amount) - amount) > 0.0000001
+    ) {
       throw new Error("STAKE_INTENT_MISMATCH");
     }
     if (!id) throw new Error("PI_PAYMENT_NOT_FOUND");
@@ -918,6 +940,8 @@ function assertAdminProjectScope(adminSession, project) {
         duration_days: context.intent.duration_days,
         stake_intent_id: context.intent.id,
         username: clean(piUser.username) || null,
+        // Keep the Pi Sandbox identity separate from the canonical ALBUKHR UID.
+        testnet_pi_uid: clean(piUser.uid) || null,
         txid: clean(txid),
       },
       updated_at: new Date().toISOString(),
@@ -2591,8 +2615,7 @@ router.post("/admin/policy/review", async (req, res) => {
 
   router.post("/intent", async (req, res) => {
     try {
-      const { session } =
-  await validateSessionAndPiIdentity(req);
+      const { session } = await validateSessionAndPiIdentity(req);
       const projectId = clean(req.body && req.body.projectId);
       const projectCode = clean(req.body && req.body.projectCode);
       const amount = numeric(req.body && req.body.amount);
@@ -2601,7 +2624,6 @@ router.post("/admin/policy/review", async (req, res) => {
       if (amount === null || amount <= 0 || !Number.isInteger(durationDays) || durationDays <= 0) {
         throw new Error("STAKE_INTENT_MISMATCH");
       }
-      if (clean(session.pi_uid) !== clean(piUser.uid)) throw new Error("PI_USER_SESSION_MISMATCH");
 
       const { data, error } = await supabase.rpc("create_testnet_stake_intent", {
         p_project_id: projectId,
@@ -2659,10 +2681,9 @@ router.post("/admin/policy/review", async (req, res) => {
 
   router.post("/arm", async (req, res) => {
     try {
-      const { session, piUser } = await validateSessionAndPiIdentity(req);
+      const { session } = await validateSessionAndPiIdentity(req);
       const intentId = clean(req.body && req.body.intentId);
       if (!intentId) throw new Error("STAKE_INTENT_ID_REQUIRED");
-      if (clean(session.pi_uid) !== clean(piUser.uid)) throw new Error("PI_USER_SESSION_MISMATCH");
       const { data, error } = await supabase.rpc("arm_testnet_stake_intent_payment", {
         p_intent_id: intentId,
         p_pi_uid: clean(session.pi_uid),
@@ -2695,7 +2716,7 @@ router.post("/admin/policy/review", async (req, res) => {
       if (context.intent.status !== "created") {
         const { error: bindError } = await supabase.rpc("bind_testnet_stake_intent_payment", {
           p_intent_id: context.intent.id,
-          p_pi_uid: clean(session.pi_uid)
+          p_pi_uid: clean(session.pi_uid),
           p_payment_id: id,
         });
         if (bindError) {
@@ -2732,7 +2753,7 @@ router.post("/admin/policy/review", async (req, res) => {
       if (context.intent.status !== "created") {
         const { data: bound, error: bindError } = await supabase.rpc("bind_testnet_stake_intent_payment", {
           p_intent_id: context.intent.id,
-          p_pi_uid: clean(session.pi_uid)
+          p_pi_uid: clean(session.pi_uid),
           p_payment_id: id,
         });
         if (bindError || !bound) throw new Error("STAKE_INTENT_BIND_FAILED");
@@ -2743,7 +2764,7 @@ router.post("/admin/policy/review", async (req, res) => {
       const paymentRecord = await writeVerifiedPayment(completedPayment, context, piUser, txid);
       const { data: stakeData, error: finalizeError } = await supabase.rpc("finalize_testnet_stake_intent", {
         p_intent_id: context.intent.id,
-        p_pi_uid: clean(piUser.uid),
+        p_pi_uid: clean(session.pi_uid),
         p_payment_id: id,
       });
       if (finalizeError || !stakeData || !stakeData.id) {
@@ -2792,9 +2813,11 @@ router.post("/admin/policy/review", async (req, res) => {
       const intentId = clean(metadata.stake_intent_id || (req.body && req.body.intentId));
       if (!intentId) throw new Error("STAKE_INTENT_MISMATCH");
       const intent = await getIntent(intentId);
-      if (p_pi_uid: clean(session.pi_uid) ||
-          intent.project_id !== clean(metadata.project_id) ||
-          intent.project_code !== clean(metadata.project_code)) {
+      if (
+        clean(intent.pi_uid) !== clean(session.pi_uid) ||
+        clean(intent.project_id) !== clean(metadata.project_id) ||
+        clean(intent.project_code) !== clean(metadata.project_code)
+      ) {
         throw new Error("STAKE_INTENT_MISMATCH");
       }
 
@@ -2802,7 +2825,7 @@ router.post("/admin/policy/review", async (req, res) => {
       if (status.cancelled === true || status.user_cancelled === true) {
         const { data, error } = await supabase.rpc("cancel_testnet_stake_intent", {
           p_intent_id: intent.id,
-          p_pi_uid: clean(session.pi_uid)
+          p_pi_uid: clean(session.pi_uid),
           p_payment_id: id,
         });
         if (error || !data) throw new Error("STAKE_INTENT_CANCEL_FAILED");
@@ -2813,7 +2836,7 @@ router.post("/admin/policy/review", async (req, res) => {
       if (context.intent.status !== "created") {
         const { error: bindError } = await supabase.rpc("bind_testnet_stake_intent_payment", {
           p_intent_id: context.intent.id,
-          p_pi_uid: clean(piUser.uid),
+          p_pi_uid: clean(session.pi_uid),
           p_payment_id: id,
         });
         if (bindError) throw new Error("STAKE_INTENT_BIND_FAILED");
@@ -2832,7 +2855,7 @@ router.post("/admin/policy/review", async (req, res) => {
       const paymentRecord = await writeVerifiedPayment(completedPayment, context, piUser, txid);
       const { data: stake, error: finalizeError } = await supabase.rpc("finalize_testnet_stake_intent", {
         p_intent_id: context.intent.id,
-        p_pi_uid: clean(piUser.uid),
+        p_pi_uid: clean(session.pi_uid),
         p_payment_id: id,
       });
       if (finalizeError || !stake || !stake.id) throw new Error("STAKE_INTENT_FINALIZATION_FAILED");
@@ -2847,12 +2870,14 @@ router.post("/admin/policy/review", async (req, res) => {
 
   router.post("/cancel", async (req, res) => {
     try {
-      const { piUser } = await validateSessionAndPiIdentity(req);
+      const { session } = await validateSessionAndPiIdentity(req);
       const intentId = clean(req.body && req.body.intentId);
       const id = clean(req.body && req.body.paymentId);
       if (!intentId) throw new Error("STAKE_INTENT_ID_REQUIRED");
       const intent = await getIntent(intentId);
-      if (p_pi_uid: clean(session.pi_uid)) throw new Error("STAKE_INTENT_MISMATCH");
+      if (clean(intent.pi_uid) !== clean(session.pi_uid)) {
+        throw new Error("STAKE_INTENT_MISMATCH");
+      }
 
       if (id) {
         const payment = await getPayment(id);
@@ -2868,7 +2893,7 @@ router.post("/admin/policy/review", async (req, res) => {
 
       const { data, error } = await supabase.rpc("cancel_testnet_stake_intent", {
         p_intent_id: intentId,
-        p_pi_uid: clean(session.pi_uid)
+        p_pi_uid: clean(session.pi_uid),
         p_payment_id: id || null,
       });
       if (error || !data) throw new Error("STAKE_INTENT_CANCEL_FAILED");
