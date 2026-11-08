@@ -586,9 +586,52 @@ function assertAdminProjectScope(adminSession, project) {
   async function validateSessionAndPiIdentity(req) {
     const session = await getTestnetSession(req);
     const piUser = await getPiUser(bearer(req));
-    if (!clean(session.pi_uid) || clean(session.pi_uid) !== clean(piUser.uid)) {
+
+    const canonicalPiUid = clean(session && session.pi_uid);
+    const sandboxPiUid = clean(piUser && piUser.uid);
+
+    if (!canonicalPiUid || !sandboxPiUid) {
       throw new Error("PI_USER_SESSION_MISMATCH");
     }
+
+    // Optional additional binding for newer sessions.
+    // Legacy sessions are verified through users mapping below.
+    const sessionSandboxPiUid =
+      clean(session && session.testnet_pi_uid);
+
+    if (
+      sessionSandboxPiUid &&
+      sessionSandboxPiUid !== sandboxPiUid
+    ) {
+      throw new Error("OWNER_SANDBOX_IDENTITY_NOT_LINKED");
+    }
+
+    const { data: ownerIdentity, error: identityError } =
+      await supabase
+        .from("users")
+        .select("id,pi_uid,testnet_pi_uid,network")
+        .eq("pi_uid", canonicalPiUid)
+        .eq("network", NETWORK)
+        .maybeSingle();
+
+    if (identityError) {
+      console.error(
+        "[TESTNET STAKE IDENTITY LOOKUP]",
+        clean(identityError.message)
+      );
+
+      throw new Error("OWNER_IDENTITY_LOOKUP_FAILED");
+    }
+
+    if (
+      !ownerIdentity ||
+      clean(ownerIdentity.network) !== NETWORK ||
+      clean(ownerIdentity.pi_uid) !== canonicalPiUid ||
+      clean(ownerIdentity.testnet_pi_uid) !== sandboxPiUid
+    ) {
+      throw new Error("OWNER_SANDBOX_IDENTITY_NOT_LINKED");
+    }
+
     return { session, piUser };
   }
 
