@@ -2421,6 +2421,120 @@ router.post("/admin/policy/review", async (req, res) => {
     }
   });
 
+    router.post("/pending", async (req, res) => {
+    try {
+      // Read-only lookup bound to the validated Testnet session.
+      const session = await getTestnetSession(req);
+
+      const projectId = clean(
+        req.body && req.body.projectId
+      );
+
+      const projectCode = clean(
+        req.body && req.body.projectCode
+      );
+
+      const piUid = clean(
+        session && session.pi_uid
+      );
+
+      if (!projectId || !projectCode) {
+        throw new Error("PROJECT_ID_AND_CODE_REQUIRED");
+      }
+
+      if (!piUid) {
+        throw new Error("PI_USER_SESSION_MISMATCH");
+      }
+
+      const { data, error } = await supabase
+        .from("testnet_stake_intents")
+        .select(
+          "id,project_id,project_code,pi_uid,network,amount,duration_days," +
+          "reward_rate,reward_amount,payment_id,status,expires_at," +
+          "created_at,metadata"
+        )
+        .eq("network", NETWORK)
+        .eq("pi_uid", piUid)
+        .eq("project_id", projectId)
+        .eq("project_code", projectCode)
+        .eq("status", "pending_payment")
+        .order("created_at", {
+          ascending: false
+        })
+        .limit(2);
+
+      if (error) {
+        console.error(
+          "[TESTNET STAKE PENDING READ]",
+          clean(error.message)
+        );
+
+        throw new Error(
+          "STAKE_INTENT_RECOVERY_READ_FAILED"
+        );
+      }
+
+      const rows = Array.isArray(data)
+        ? data
+        : [];
+
+      // Fail closed if the database contains ambiguous pending intents.
+      if (rows.length > 1) {
+        throw new Error(
+          "STAKE_INTENT_RECOVERY_CONFLICT"
+        );
+      }
+
+      const row = rows[0] || null;
+
+      const metadata =
+        row &&
+        row.metadata &&
+        typeof row.metadata === "object"
+          ? row.metadata
+          : {};
+
+      return res.json({
+        success: true,
+        network: NETWORK,
+
+        intent: row
+          ? {
+              id: row.id,
+              project_id: row.project_id,
+              project_code: row.project_code,
+
+              amount: Number(row.amount),
+              duration_days: Number(row.duration_days),
+
+              reward_rate: Number(row.reward_rate),
+              reward_amount: Number(row.reward_amount),
+
+              payment_id: row.payment_id || null,
+
+              status: row.status,
+              expires_at: row.expires_at,
+              created_at: row.created_at,
+
+              payment_armed:
+                metadata.payment_started === true,
+
+              payment_started_at:
+                metadata.payment_started_at || null
+            }
+          : null
+      });
+
+    } catch (error) {
+      console.error(
+        "[TESTNET STAKE PENDING RECOVERY]",
+        clean(error && error.message)
+      );
+
+      return apiError(res, error);
+    }
+  });
+
   router.post("/intent", async (req, res) => {
     try {
       const { session, piUser } = await validateSessionAndPiIdentity(req);
