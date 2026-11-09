@@ -2027,26 +2027,40 @@ router.post("/admin/policy/review", async (req, res) => {
         : "STAKING_POLICY_OR_UNIVERSAL_RISK_OR_LIQUIDITY_NOT_READY"
     ),
       terms,
-        coverage: coverage
+                coverage: coverage
           ? {
               verified_liquidity_contributed:
                 Number(coverage.verified_liquidity_contributed || 0),
+
               liquidity_buffer:
                 Number(coverage.liquidity_buffer || 0),
+
               capital_reserve_balance:
                 Number(coverage.capital_reserve_balance || 0),
+
               project_operating_balance:
                 Number(coverage.project_operating_balance || 0),
+
               reward_reserve_balance:
                 Number(coverage.reward_reserve_balance || 0),
+
               total_tracked_assets:
                 Number(coverage.total_tracked_assets || 0),
+
+              remaining_new_principal_capacity:
+                Number(remainingPrincipalCapacity),
+
+              deployment_limit:
+                Number(deploymentLimit),
+
               total_liability:
                 Number(coverage.total_liability || 0),
+
               coverage_ratio:
                 coverage.coverage_ratio == null
                   ? null
                   : Number(coverage.coverage_ratio),
+
               staking_eligible:
                 coverage.staking_eligible === true
             }
