@@ -2020,9 +2020,13 @@ router.post("/admin/policy/review", async (req, res) => {
         },
         can_stake: canStake,
         reason: canStake
-          ? null
-          : "STAKING_POLICY_OR_UNIVERSAL_RISK_OR_LIQUIDITY_NOT_READY",
-        terms,
+  ? null
+  : (
+      baseCanStake && hasEligibleOffer
+        ? "TESTNET_STAKING_DEPLOYMENT_CAPACITY_INSUFFICIENT"
+        : "STAKING_POLICY_OR_UNIVERSAL_RISK_OR_LIQUIDITY_NOT_READY"
+    ),
+      terms,
         coverage: coverage
           ? {
               verified_liquidity_contributed:
