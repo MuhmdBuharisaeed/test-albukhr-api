@@ -2969,18 +2969,140 @@ router.post("/admin/policy/review", async (req, res) => {
         throw new Error("STAKE_INTENT_MISMATCH");
       }
 
-      const status = payment.status || {};
-      if (status.cancelled === true || status.user_cancelled === true) {
-        const { data, error } = await supabase.rpc("cancel_testnet_stake_intent", {
-          p_intent_id: intent.id,
-          p_pi_uid: clean(session.pi_uid),
-          p_payment_id: id,
+      
+      // Validate the Pi payment is bound to this exact Testnet intent.
+      const validateReconcileAssociation = (candidate) => {
+        validatePaymentBasics(candidate, { allowCancelled: true });
+        validatePaymentUser(candidate, piUser);
+
+        const candidateMetadata = paymentMetadata(candidate);
+
+        if (
+          paymentId(candidate) !== id ||
+          clean(candidateMetadata.network).toLowerCase() !== NETWORK ||
+          clean(candidateMetadata.action) !== "stake" ||
+          clean(candidateMetadata.stake_intent_id) !== intent.id ||
+          clean(candidateMetadata.project_id) !== clean(intent.project_id) ||
+          clean(candidateMetadata.project_code) !== clean(intent.project_code) ||
+          Number(candidateMetadata.duration_days) !== Number(intent.duration_days) ||
+          paymentAmount(candidate) === null ||
+          Math.abs(paymentAmount(candidate) - Number(intent.amount)) > 0.0000001 ||
+          (intent.payment_id && clean(intent.payment_id) !== id)
+        ) {
+          throw new Error("STAKE_INTENT_MISMATCH");
+        }
+
+        return candidate.status || {};
+      };
+
+      // Only an explicit Pi DTO with transaction:null and both verification
+      // flags false is safe evidence that no blockchain transaction exists.
+      const hasAuthoritativeNoTransaction = (candidate) => {
+        const candidateStatus = candidate && candidate.status;
+
+        return !!candidate &&
+          candidate.transaction === null &&
+          !paymentTxid(candidate) &&
+          !!candidateStatus &&
+          candidateStatus.transaction_verified === false &&
+          candidateStatus.developer_completed === false;
+      };
+
+      const releaseCancelledIntent = async () => {
+        const { data, error } = await supabase.rpc(
+          "cancel_testnet_stake_intent",
+          {
+            p_intent_id: intent.id,
+            p_pi_uid: clean(session.pi_uid),
+            p_payment_id: id
+          }
+        );
+
+        if (error || !data) {
+          console.error(
+            "[TESTNET STAKE RECONCILE CANCEL RPC]",
+            clean(error && error.message)
+          );
+
+          throw new Error("STAKE_INTENT_CANCEL_FAILED");
+        }
+
+        return res.json({
+          success: true,
+          network: NETWORK,
+          outcome: "cancelled",
+          intent_id: intent.id,
+          status: data.status
         });
-        if (error || !data) throw new Error("STAKE_INTENT_CANCEL_FAILED");
-        return res.json({ success: true, network: NETWORK, outcome: "cancelled", intent_id: intent.id, status: data.status });
+      };
+
+      let status = validateReconcileAssociation(payment);
+
+      // Never release a reward reservation if blockchain evidence exists.
+      if (status.cancelled === true || status.user_cancelled === true) {
+        if (!hasAuthoritativeNoTransaction(payment)) {
+          throw new Error(
+            "PI_PAYMENT_CANCELLED_WITH_TRANSACTION_EVIDENCE"
+          );
+        }
+
+        return await releaseCancelledIntent();
       }
 
-      const context = await validatePaymentContext(payment, session, piUser, intent.id);
+      const intentExpiry = intent.expires_at
+        ? new Date(intent.expires_at).getTime()
+        : NaN;
+
+      const intentExpired =
+        Number.isFinite(intentExpiry) &&
+        intentExpiry <= Date.now();
+
+      // Automatically cancel only expired payments for which Pi
+      // explicitly confirms that no blockchain transaction exists.
+      if (intentExpired && hasAuthoritativeNoTransaction(payment)) {
+        try {
+          await axios.post(
+            `${piApiBase}/payments/${encodeURIComponent(id)}/cancel`,
+            {},
+            {
+              headers: piKeyHeaders({
+                "Content-Type": "application/json"
+              }),
+              timeout: 15000
+            }
+          );
+        } catch (cancelError) {
+          // A timeout is not proof of cancellation. Always re-read Pi.
+          console.warn(
+            "[TESTNET STAKE RECONCILE] Pi cancellation response uncertain; rechecking payment"
+          );
+        }
+
+        payment = await getPayment(id);
+        status = validateReconcileAssociation(payment);
+
+        if (status.cancelled === true || status.user_cancelled === true) {
+          if (!hasAuthoritativeNoTransaction(payment)) {
+            throw new Error(
+              "PI_PAYMENT_CANCELLED_WITH_TRANSACTION_EVIDENCE"
+            );
+          }
+
+          // The RPC releases the reserved reward exactly once.
+          return await releaseCancelledIntent();
+        }
+
+        // If a transaction appeared during cancellation, do not release
+        // anything. Continue through normal verified-payment reconciliation.
+      }
+
+      const context = await validatePaymentContext(
+        payment,
+        session,
+        piUser,
+        intent.id
+      );
+
       if (context.intent.status !== "created") {
         const { error: bindError } = await supabase.rpc("bind_testnet_stake_intent_payment", {
           p_intent_id: context.intent.id,
