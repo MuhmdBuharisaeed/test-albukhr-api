@@ -1999,17 +1999,6 @@ router.post("/admin/policy/review", async (req, res) => {
         };
       });
 
-      const terms = (termsResult.data || []).map((term) => ({
-        duration_days: Number(term.duration_days),
-        min_stake: Number(term.min_stake),
-        reward_rate: Number(term.reward_rate),
-        reward_percent: Number(term.reward_rate) * 100,
-        available:
-          canStake &&
-          Number(term.reward_rate) > 0 &&
-          Number(term.reward_rate) <= Number(control.max_reward_rate)
-      }));
-
       return res.json({
         success: true,
         network: NETWORK,
