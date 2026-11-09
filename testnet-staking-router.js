@@ -2950,7 +2950,7 @@ router.post("/admin/policy/review", async (req, res) => {
       const { session, piUser } = await validateSessionAndPiIdentity(req);
       const id = clean(req.body && req.body.paymentId);
       if (!id) throw new Error("PI_PAYMENT_NOT_FOUND");
-      const payment = await getPayment(id);
+      let payment = await getPayment(id);
       validatePaymentUser(payment, piUser);
       validatePaymentBasics(payment, { allowCancelled: true });
 
