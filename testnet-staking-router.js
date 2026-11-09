@@ -74,6 +74,7 @@ OWNER_SANDBOX_IDENTITY_NOT_LINKED: 403,
   PI_PAYMENT_NETWORK_INVALID: 400,
   PI_PAYMENT_DIRECTION_INVALID: 400,
   PI_PAYMENT_CANCELLED: 409,
+  PI_PAYMENT_CANCELLED_WITH_TRANSACTION_EVIDENCE: 409,
   PI_PAYMENT_AMOUNT_INVALID: 400,
   PI_PAYMENT_DESTINATION_MISMATCH: 400,
   PI_PAYMENT_NOT_APPROVED: 409,
@@ -235,6 +236,8 @@ OWNER_SANDBOX_IDENTITY_NOT_LINKED: 403,
       "The Pi payment direction is invalid for this operation.",
     PI_PAYMENT_CANCELLED:
       "This Pi payment has already been cancelled.",
+    PI_PAYMENT_CANCELLED_WITH_TRANSACTION_EVIDENCE:
+  "Pi reports cancellation but transaction evidence exists. The reward reserve remains locked for manual review.",
     PI_PAYMENT_AMOUNT_INVALID:
       "The Pi payment amount does not match the required amount.",
     PI_PAYMENT_DESTINATION_MISMATCH:
