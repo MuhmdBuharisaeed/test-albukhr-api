@@ -26,8 +26,8 @@ assert(start >= 0 && end > start, "finds the payment-context validation function
 if (start >= 0 && end > start) {
   const block = source.slice(start, end);
   assert(
-    block.includes('intent.status === "pending_payment"'),
-    "checks only pending intents before Pi payment processing"
+    /if\s*\(intent\.status\s*!==\s*"pending_payment"\)/.test(block),
+    "rejects every intent that is not pending before Pi payment processing"
   );
   assert(
     block.includes("intent.metadata") && block.includes("payment_started !== true"),
