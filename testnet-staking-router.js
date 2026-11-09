@@ -3015,7 +3015,8 @@ router.post("/admin/policy/review", async (req, res) => {
 
   router.post("/cancel", async (req, res) => {
     try {
-      const { session } = await validateSessionAndPiIdentity(req);
+      
+const { session, piUser } = await validateSessionAndPiIdentity(req);
       const intentId = clean(req.body && req.body.intentId);
       const id = clean(req.body && req.body.paymentId);
       if (!intentId) throw new Error("STAKE_INTENT_ID_REQUIRED");
