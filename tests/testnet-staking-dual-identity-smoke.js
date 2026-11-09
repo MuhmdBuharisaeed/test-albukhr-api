@@ -125,7 +125,7 @@ const reconcile = extract(
   "reconcile route"
 );
 match("reconcile matches intent to canonical UID", reconcile,
-    /intent\.pi_uid\s*!==\s*clean\(session(?:\s*&&\s*session)?\.pi_uid\)/);
+  /clean\(intent\.pi_uid\)\s*!==\s*clean\(session(?:\s*&&\s*session)?\.pi_uid\)/);
 assert.equal((reconcile.match(/p_pi_uid:\s*clean\(session\.pi_uid\)/g) || []).length, 3,
   "reconcile cancel, bind, and finalizer must use canonical UID");
 checks += 1;
@@ -140,7 +140,7 @@ const cancel = extract(
 match("cancel retains session and Pi user", cancel,
   /const \{ session,\s*piUser \}\s*=\s*await validateSessionAndPiIdentity\(req\)/);
 match("cancel checks intent owner with canonical UID", cancel,
-  /intent\.pi_uid\s*!==\s*clean\(session\.pi_uid\)/);
+  /clean\(intent\.pi_uid\)\s*!==\s*clean\(session\.pi_uid\)/);
 match("cancel RPC uses canonical UID", cancel,
   /p_pi_uid:\s*clean\(session\.pi_uid\)/);
 match("cancel payment DTO remains Sandbox verified", cancel,
