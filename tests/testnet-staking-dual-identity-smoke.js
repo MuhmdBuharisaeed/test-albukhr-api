@@ -63,7 +63,8 @@ const paymentContext = extract(
   "payment context"
 );
 match("Pi payment DTO validation is retained", paymentContext, /validatePaymentUser\(payment,\s*piUser\)/);
-match("intent owner check uses canonical session UID", paymentContext, /intent\.pi_uid\s*!==\s*clean\(session\.pi_uid\)/);
+match("intent owner check uses canonical session UID", paymentContext,
+  /clean\(intent\.pi_uid\)\s*!==\s*clean\(session\s*&&\s*session\.pi_uid\)/);
 noMatch("no direct canonical-to-Sandbox comparison remains", paymentContext, /session\.pi_uid[\s\S]{0,100}piUser\.uid/);
 
 const writer = extract(
