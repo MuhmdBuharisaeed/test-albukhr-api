@@ -150,6 +150,60 @@ assert.match(
   "maps recovery read failures to HTTP 500"
 );
 
+/* --------------------------------------------------
+   CANCEL ROUTE PI IDENTITY VALIDATION
+-------------------------------------------------- */
+
+const cancelStartToken =
+  'router.post("/cancel", async (req, res) => {';
+
+const cancelStart = source.indexOf(cancelStartToken);
+
+assert.ok(
+  cancelStart >= 0,
+  "Testnet cancellation route exists"
+);
+
+const cancelEnd = source.indexOf(
+  "\n  });\n\n  return router;",
+  cancelStart + cancelStartToken.length
+);
+
+assert.ok(
+  cancelEnd > cancelStart,
+  "Cancellation route has a valid closing boundary"
+);
+
+const cancelRoute = source.slice(cancelStart, cancelEnd);
+
+assert.match(
+  cancelRoute,
+  /const\s+\{\s*session\s*,\s*piUser\s*\}\s*=\s*await\s+validateSessionAndPiIdentity\(req\)/,
+  "Cancellation route retrieves both authenticated session and Pi identity"
+);
+
+assert.match(
+  cancelRoute,
+  /validatePaymentUser\(payment,\s*piUser\)/,
+  "Cancellation verifies the official Pi payment owner"
+);
+
+assert.match(
+  cancelRoute,
+  /status\.cancelled\s*!==\s*true.*status\.user_cancelled\s*!==\s*true/s,
+  "Cancellation requires official Pi cancellation status"
+);
+
+assert.match(
+  cancelRoute,
+  /cancel_testnet_stake_intent/,
+  "Cancellation delegates to the protected database RPC"
+);
+
+console.log(
+  "PASS: cancellation route validates Pi identity and official cancellation status."
+);
+
 // --------------------------------------------------
 // RESULT
 // --------------------------------------------------
