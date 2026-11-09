@@ -3071,15 +3071,55 @@ router.post("/admin/policy/review", async (req, res) => {
               timeout: 15000
             }
           );
+        
         } catch (cancelError) {
-          // A timeout is not proof of cancellation. Always re-read Pi.
+          // Safe diagnostics: never expose credentials or full payment data.
+          const cancelResponseData =
+            cancelError &&
+            cancelError.response &&
+            cancelError.response.data
+              ? cancelError.response.data
+              : null;
+
+          const cancelResponseMessage = clean(
+            cancelResponseData &&
+            (cancelResponseData.error || cancelResponseData.message)
+          );
+
           console.warn(
-            "[TESTNET STAKE RECONCILE] Pi cancellation response uncertain; rechecking payment"
+            "[TESTNET STAKE RECONCILE] Pi cancellation API request failed",
+            JSON.stringify({
+              payment_id_suffix: id.slice(-6),
+              http_status:
+                Number(cancelError && cancelError.response && cancelError.response.status) ||
+                null,
+              error_code: clean(cancelError && cancelError.code) || null,
+              error_message: (
+                cancelResponseMessage ||
+                clean(cancelError && cancelError.message) ||
+                "UNKNOWN_CANCEL_ERROR"
+              ).slice(0, 180)
+            })
           );
         }
 
+        // Re-read Pi's authoritative payment state.
         payment = await getPayment(id);
         status = validateReconcileAssociation(payment);
+
+        console.info(
+          "[TESTNET STAKE RECONCILE] Pi payment state after cancellation recheck",
+          JSON.stringify({
+            payment_id_suffix: id.slice(-6),
+            developer_approved: status.developer_approved === true,
+            transaction_verified: status.transaction_verified === true,
+            developer_completed: status.developer_completed === true,
+            cancelled: status.cancelled === true,
+            user_cancelled: status.user_cancelled === true,
+            transaction_present: !!payment.transaction,
+            transaction_id_present: !!paymentTxid(payment)
+          })
+        );
 
         if (status.cancelled === true || status.user_cancelled === true) {
           if (!hasAuthoritativeNoTransaction(payment)) {
