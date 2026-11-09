@@ -3025,17 +3025,80 @@ const { session, piUser } = await validateSessionAndPiIdentity(req);
         throw new Error("STAKE_INTENT_MISMATCH");
       }
 
-      if (id) {
-        const payment = await getPayment(id);
-        validatePaymentBasics(payment, { allowCancelled: true });
-        validatePaymentUser(payment, piUser);
-        const metadata = paymentMetadata(payment);
-        if (clean(metadata.stake_intent_id) !== intentId) throw new Error("STAKE_INTENT_MISMATCH");
-        const status = payment.status || {};
-        if (status.cancelled !== true && status.user_cancelled !== true) {
-          throw new Error("PI_PAYMENT_NOT_CONFIRMED_CANCELLED");
-        }
+            if (intent.status !== "pending_payment") {
+        throw new Error("STAKE_INTENT_NOT_PENDING");
       }
+
+      if (!id || !intent.payment_id || clean(intent.payment_id) !== id) {
+        throw new Error("STAKE_INTENT_PAYMENT_ID_REQUIRED");
+      }
+
+      let payment = await getPayment(id);
+
+      // Verify that this is the exact payment bound to this intent.
+      // Never release reserve when blockchain transaction evidence exists.
+      const validateCancellationPayment = (candidate) => {
+        validatePaymentBasics(candidate, { allowCancelled: true });
+        validatePaymentUser(candidate, piUser);
+
+        const metadata = paymentMetadata(candidate);
+
+        if (paymentId(candidate) !== id) {
+          throw new Error("PI_PAYMENT_ID_MISMATCH");
+        }
+
+        if (
+          clean(metadata.network).toLowerCase() !== NETWORK ||
+          clean(metadata.action) !== "stake" ||
+          clean(metadata.stake_intent_id) !== intentId ||
+          clean(metadata.project_id) !== clean(intent.project_id) ||
+          clean(metadata.project_code) !== clean(intent.project_code) ||
+          Number(metadata.duration_days) !== Number(intent.duration_days) ||
+          paymentAmount(candidate) === null ||
+          Math.abs(paymentAmount(candidate) - Number(intent.amount)) > 0.0000001
+        ) {
+          throw new Error("STAKE_INTENT_MISMATCH");
+        }
+
+        if (
+          paymentTxid(candidate) ||
+          candidate.transaction ||
+          developerCompleted(candidate) ||
+          transactionVerified(candidate)
+        ) {
+          throw new Error("PI_PAYMENT_ALREADY_SUBMITTED");
+        }
+
+        return candidate.status || {};
+      };
+
+      let status = validateCancellationPayment(payment);
+
+      if (status.cancelled !== true && status.user_cancelled !== true) {
+        try {
+          await axios.post(
+            `${piApiBase}/payments/${encodeURIComponent(id)}/cancel`,
+            {},
+            {
+              headers: piKeyHeaders({ "Content-Type": "application/json" }),
+              timeout: 15000,
+            }
+          );
+        } catch (cancelError) {
+          // The request may have succeeded despite a timeout or HTTP error.
+          // Re-read Pi's authoritative payment state before deciding.
+          console.warn(
+            "[TESTNET STAKE CANCEL] Pi cancellation response uncertain; rechecking payment"
+          );
+        }
+
+        payment = await getPayment(id);
+        status = validateCancellationPayment(payment);
+      }
+
+      if (status.cancelled !== true && status.user_cancelled !== true) {
+        throw new Error("PI_PAYMENT_NOT_CONFIRMED_CANCELLED");
+        }
 
       const { data, error } = await supabase.rpc("cancel_testnet_stake_intent", {
         p_intent_id: intentId,
