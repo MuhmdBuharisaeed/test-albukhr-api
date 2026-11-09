@@ -125,7 +125,7 @@ const reconcile = extract(
   "reconcile route"
 );
 match("reconcile matches intent to canonical UID", reconcile,
-  /intent\.pi_uid\s*!==\s*clean\(session\.pi_uid\)/);
+    /intent\.pi_uid\s*!==\s*clean\(session(?:\s*&&\s*session)?\.pi_uid\)/);
 assert.equal((reconcile.match(/p_pi_uid:\s*clean\(session\.pi_uid\)/g) || []).length, 3,
   "reconcile cancel, bind, and finalizer must use canonical UID");
 checks += 1;
