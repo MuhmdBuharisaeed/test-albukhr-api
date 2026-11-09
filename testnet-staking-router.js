@@ -1851,7 +1851,119 @@ router.post("/admin/policy/review", async (req, res) => {
         control.staking_enabled === true &&
         control.approval_status === "approved";
 
-      const canStake =
+            /*
+       * Calculate the remaining principal capacity using the same
+       * deployment and principal limits enforced by the database trigger.
+       *
+       * Never display Stake as Ready when the database would reject
+       * even the smallest currently eligible offer.
+       */
+      const controlReservePercent = control
+        ? numeric(control.capital_reserve_percent)
+        : null;
+
+      const controlDeploymentPercent = control
+        ? numeric(control.maximum_deployment_percent)
+        : null;
+
+      const controlMaxPrincipal = control
+        ? numeric(control.max_active_principal)
+        : null;
+
+      const controlMaxRewardRate = control
+        ? numeric(control.max_reward_rate)
+        : null;
+
+      const totalTrackedAssets = coverage
+        ? numeric(coverage.total_tracked_assets)
+        : null;
+
+      const outstandingPrincipal = coverage
+        ? numeric(coverage.outstanding_principal)
+        : null;
+
+      const capacityInputsReady = [
+        riskReserve,
+        riskDeployment,
+        riskPrincipal,
+        controlReservePercent,
+        controlDeploymentPercent,
+        controlMaxPrincipal,
+        totalTrackedAssets,
+        outstandingPrincipal
+      ].every(function (value) {
+        return value !== null && Number.isFinite(value);
+      });
+
+      const effectiveReservePercent = capacityInputsReady
+        ? Math.max(riskReserve, controlReservePercent)
+        : 0;
+
+      const effectiveDeploymentPercent = capacityInputsReady
+        ? Math.min(
+            riskDeployment,
+            controlDeploymentPercent,
+            100 - effectiveReservePercent
+          )
+        : 0;
+
+      const effectiveMaxPrincipal = capacityInputsReady
+        ? Math.min(riskPrincipal, controlMaxPrincipal)
+        : 0;
+
+      const deploymentLimit = capacityInputsReady
+        ? Math.trunc(
+            (
+              totalTrackedAssets *
+              effectiveDeploymentPercent /
+              100
+            ) * 1e7
+          ) / 1e7
+        : 0;
+
+      const remainingPrincipalCapacity = capacityInputsReady
+        ? Math.max(
+            0,
+            Math.min(
+              effectiveMaxPrincipal,
+              deploymentLimit
+            ) - outstandingPrincipal
+          )
+        : 0;
+
+      /*
+       * Only count active offer terms that also satisfy the approved
+       * maximum reward rate.
+       */
+      const minimumEligibleOfferStake =
+        (termsResult.data || []).reduce(function (minimum, term) {
+          const minStake = numeric(term.min_stake);
+          const rewardRate = numeric(term.reward_rate);
+
+          if (
+            minStake !== null &&
+            minStake > 0 &&
+            rewardRate !== null &&
+            rewardRate > 0 &&
+            controlMaxRewardRate !== null &&
+            rewardRate <= controlMaxRewardRate
+          ) {
+            return Math.min(minimum, minStake);
+          }
+
+          return minimum;
+        }, Infinity);
+
+      const hasEligibleOffer =
+        Number.isFinite(minimumEligibleOfferStake);
+
+      const capacityFitsMinimumOffer =
+        capacityInputsReady &&
+        hasEligibleOffer &&
+        remainingPrincipalCapacity + 1e-9 >=
+          minimumEligibleOfferStake;
+
+      const baseCanStake =
         globalPolicy.active === true &&
         globalPolicy.staking_policy_active === true &&
         universalRiskReady &&
@@ -1860,6 +1972,32 @@ router.post("/admin/policy/review", async (req, res) => {
         treasuryReady &&
         !!coverage &&
         coverage.staking_eligible === true;
+
+      const canStake =
+        baseCanStake &&
+        capacityFitsMinimumOffer;
+
+      const terms = (termsResult.data || []).map(function (term) {
+        const minStake = numeric(term.min_stake);
+        const rewardRate = numeric(term.reward_rate);
+
+        return {
+          duration_days: Number(term.duration_days),
+          min_stake: Number(term.min_stake),
+          reward_rate: Number(term.reward_rate),
+          reward_percent: Number(term.reward_rate) * 100,
+
+          available:
+            canStake &&
+            minStake !== null &&
+            minStake > 0 &&
+            minStake <= remainingPrincipalCapacity + 1e-9 &&
+            rewardRate !== null &&
+            rewardRate > 0 &&
+            controlMaxRewardRate !== null &&
+            rewardRate <= controlMaxRewardRate
+        };
+      });
 
       const terms = (termsResult.data || []).map((term) => ({
         duration_days: Number(term.duration_days),
