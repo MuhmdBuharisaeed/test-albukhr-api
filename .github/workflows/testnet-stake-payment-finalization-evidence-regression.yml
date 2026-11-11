@@ -1,0 +1,52 @@
+
+name: Testnet Stake Payment Finalization Evidence Regression
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "tests/testnet-stake-payment-finalization-evidence-regression.test.cjs"
+      - "supabase/migrations/**"
+      - ".github/workflows/testnet-stake-payment-finalization-evidence-regression.yml"
+
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "tests/testnet-stake-payment-finalization-evidence-regression.test.cjs"
+      - "supabase/migrations/**"
+      - ".github/workflows/testnet-stake-payment-finalization-evidence-regression.yml"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testnet-stake-payment-finalization-evidence-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  payment-finalization-evidence-regression:
+    name: Payment Finalization Evidence Regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Verify regression test syntax
+        run: |
+          node --check tests/testnet-stake-payment-finalization-evidence-regression.test.cjs
+
+      - name: Run payment finalization evidence regression
+        run: |
+          node tests/testnet-stake-payment-finalization-evidence-regression.test.cjs
