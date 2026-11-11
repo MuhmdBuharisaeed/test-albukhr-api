@@ -166,7 +166,7 @@ assert.ok(
 
 const cancelEnd = source.indexOf(
   "\n  });\n\n  return router;",
-  cancelStart + cancelStartToken.length
+  cancelStart
 );
 
 assert.ok(
@@ -182,9 +182,11 @@ assert.match(
   "Cancellation route retrieves both authenticated session and Pi identity"
 );
 
+// The router validates the exact refreshed Pi payment inside the nested
+// validateCancellationPayment(candidate) helper. Assert that actual contract.
 assert.match(
   cancelRoute,
-  /validatePaymentUser\(payment,\s*piUser\)/,
+  /validatePaymentUser\(candidate,\s*piUser\)/,
   "Cancellation verifies the official Pi payment owner"
 );
 
