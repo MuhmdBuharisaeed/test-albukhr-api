@@ -1,0 +1,55 @@
+
+name: ALBUKHR Testnet Global Transaction Coverage Readiness Regression
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'testnet-global-transaction-control-router.js'
+      - 'tests/testnet-global-transaction-rage-readiness.test.cjs'
+      - '.github/workflows/testnet-global-transaction-coverage-readiness.yml'
+
+  pull_request:
+    branches: [main]
+    paths:
+      - 'testnet-global-transaction-control-router.js'
+      - 'tests/testnet-global-transaction-rage-readiness.test.cjs'
+      - '.github/workflows/testnet-global-transaction-coverage-readiness.yml'
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testnet-global-transaction-coverage-readiness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage-readiness-regression:
+    name: Testnet staking coverage readiness regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify required source files
+        run: |
+          set -euo pipefail
+          test -f testnet-global-transaction-control-router.js
+          test -f tests/testnet-global-transaction-rage-readiness.test.cjs
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check testnet-global-transaction-control-router.js
+          node --check tests/testnet-global-transaction-rage-readiness.test.cjs
+
+      - name: Run staking coverage readiness regression
+        run: node tests/testnet-global-transaction-rage-readiness.test.cjs
