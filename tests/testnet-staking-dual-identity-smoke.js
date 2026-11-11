@@ -143,8 +143,10 @@ match("cancel checks intent owner with canonical UID", cancel,
   /clean\(intent\.pi_uid\)\s*!==\s*clean\(session\.pi_uid\)/);
 match("cancel RPC uses canonical UID", cancel,
   /p_pi_uid:\s*clean\(session\.pi_uid\)/);
+// Cancellation validates the refreshed Pi payment inside the nested
+// validateCancellationPayment(candidate) helper, not directly on `payment`.
 match("cancel payment DTO remains Sandbox verified", cancel,
-  /validatePaymentUser\(payment,\s*piUser\)/);
+  /validatePaymentUser\(candidate,\s*piUser\)/);
 
 noMatch("no RPC passes Pi Sandbox UID as canonical p_pi_uid", source,
   /p_pi_uid:\s*clean\(piUser\.uid\)/);
