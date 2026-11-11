@@ -1,0 +1,53 @@
+
+name: ALBUKHR Testnet Global Staking Reactivation Coverage Regression
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/20261111130000_testnet_global_staking_activation_coverage_alignment_v1.sql'
+      - 'tests/testnet-global-staking-reactivation-coverage-regression.test.cjs'
+      - '.github/workflows/testnet-global-staking-reactivation-coverage-regression.yml'
+
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/20261111130000_testnet_global_staking_activation_coverage_alignment_v1.sql'
+      - 'tests/testnet-global-staking-reactivation-coverage-regression.test.cjs'
+      - '.github/workflows/testnet-global-staking-reactivation-coverage-regression.yml'
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testnet-global-staking-reactivation-coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  migration-contract-regression:
+    name: Verify Testnet global staking reactivation migration contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify migration and regression test files
+        run: |
+          set -euo pipefail
+          test -f supabase/migrations/20261111130000_testnet_global_staking_activation_coverage_alignment_v1.sql
+          test -f tests/testnet-global-staking-reactivation-coverage-regression.test.cjs
+
+      - name: Check regression test syntax
+        run: node --check tests/testnet-global-staking-reactivation-coverage-regression.test.cjs
+
+      - name: Run migration contract regression
+        run: node tests/testnet-global-staking-reactivation-coverage-regression.test.cjs
