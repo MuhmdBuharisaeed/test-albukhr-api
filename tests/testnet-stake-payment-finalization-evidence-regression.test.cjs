@@ -10,7 +10,7 @@ const assert = require("node:assert/strict");
 
 const migrationPath = path.join(
   __dirname, "..", "supabase", "migrations",
-  "20261111140000_testnet_stake_payment_finalization_evidence_guard_v1.sql"
+  "20261111134212_testnet_stake_payment_finalization_evidence_guard_v1.sql"
 );
 const sql = fs.readFileSync(migrationPath, "utf8");
 
