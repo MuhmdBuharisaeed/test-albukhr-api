@@ -1576,7 +1576,7 @@ app.post(
           res,
           400,
           "MINIMUM_WITHDRAWAL",
-          "Minimum Testnet wallet receive amount is 0.50 Pi."
+          "Minimum Testnet wallet receive amount is 0.05 Pi."
         );
       }
 
