@@ -1,0 +1,49 @@
+name: Testnet A2U Withdrawal Regression
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "server.js"
+      - "testnet-outflow-fee-router.js"
+      - "testnet-a2u-payout.js"
+      - "tests/testnet-a2u-payout-smoke.js"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/testnet-a2u-withdrawal-regression.yml"
+
+  pull_request:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+jobs:
+  testnet-a2u-regression:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Check server syntax
+        run: node --check server.js
+
+      - name: Check outflow router syntax
+        run: node --check testnet-outflow-fee-router.js
+
+      - name: Check A2U adapter syntax
+        run: node --check testnet-a2u-payout.js
+
+      - name: Run A2U smoke tests
+        run: node tests/testnet-a2u-payout-smoke.js
