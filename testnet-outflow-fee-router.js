@@ -625,7 +625,9 @@ async function assertOwnerOutflowFeeReady(withdrawalId) {
       if (!stakeId || !["reward", "capital"].includes(type)) {
         throw new Error("INVALID_WITHDRAWAL_REQUEST");
       }
-      if (amount === null || amount < 0.5) throw new Error("MINIMUM_STAKER_WITHDRAWAL_IS_0.50_PI");
+      if (amount === null || amount < 0.05) {
+  throw new Error("MINIMUM_STAKER_WITHDRAWAL_IS_0.05_PI");
+      }
       if (!wallet) throw new Error("WALLET_ADDRESS_REQUIRED");
       if (!idempotencyKey) throw new Error("WITHDRAWAL_IDEMPOTENCY_KEY_REQUIRED");
 
