@@ -1570,7 +1570,7 @@ app.post(
       if (
         requestedAmount ===
           null ||
-        requestedAmount < 0.5
+        requestedAmount < 0.05
       ) {
         return jsonError(
           res,
