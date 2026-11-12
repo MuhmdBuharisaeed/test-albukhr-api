@@ -1,11 +1,19 @@
 "use strict";
 
 /*
- * ALBUKHR TESTNET A2U PAYOUT — Pi Platform SDK adapter
+ * ALBUKHR TESTNET A2U PAYOUT ADAPTER
  *
- * Payment IDs are persisted before submitPayment. Retries resume the same
- * Pi payment; they never create a second payment when an incomplete one exists.
- * This module is Testnet-only and does not modify Mainnet payout behavior.
+ * Uses the official Pi Node.js backend SDK (pi-backend).
+ * Testnet only. This module never sends a payout on Mainnet.
+ *
+ * Safety invariants:
+ * - Persist paymentId before submitPayment.
+ * - Persist txid immediately after submitPayment and before completePayment.
+ * - Existing stored payment IDs are resumed by lookup; they are never recreated.
+ * - An existing payment ID with no linked txid is treated as uncertain and is
+ *   NOT auto-submitted again. Reconciliation never calls submitPayment.
+ * - Completion requires the Pi server to report verified transaction and
+ *   developer_completed state.
  */
 
 function createTestnetA2UPayout(options) {
@@ -15,10 +23,14 @@ function createTestnetA2UPayout(options) {
   const walletPrivateSeed = String(options.walletPrivateSeed || "").trim();
   const appWallet = String(options.appWallet || "").trim().toUpperCase();
   const persistPaymentId = options.persistPaymentId;
+  const persistTxid = options.persistTxid;
   const createPiClient = options.createPiClient;
 
   if (typeof persistPaymentId !== "function") {
     throw new Error("A2U_PAYMENT_ID_PERSISTENCE_REQUIRED");
+  }
+  if (typeof persistTxid !== "function") {
+    throw new Error("A2U_TXID_PERSISTENCE_REQUIRED");
   }
 
   function clean(value) {
@@ -43,9 +55,9 @@ function createTestnetA2UPayout(options) {
 
   function paymentTxid(payment) {
     return clean(
-      payment && payment.transaction &&
-        (payment.transaction.txid || payment.transaction.tx_hash) ||
-      payment && payment.txid
+      (payment && payment.transaction &&
+        (payment.transaction.txid || payment.transaction.tx_hash)) ||
+      (payment && payment.txid)
     );
   }
 
@@ -67,7 +79,7 @@ function createTestnetA2UPayout(options) {
     const metadata = payment && payment.metadata &&
       typeof payment.metadata === "object" ? payment.metadata : {};
     return clean(metadata.albukhr_app) === "ALBUKHR" &&
-      clean(metadata.network) === "testnet" &&
+      clean(metadata.network).toLowerCase() === "testnet" &&
       clean(metadata.withdrawal_id) === expected.withdrawalId &&
       clean(metadata.source_type) === expected.sourceType;
   }
@@ -109,14 +121,14 @@ function createTestnetA2UPayout(options) {
   }
 
   async function getClient() {
+    if (typeof createPiClient === "function") return createPiClient();
     if (!apiKey) throw new Error("PI_API_KEY_REQUIRED");
-    if (!walletPrivateSeed) throw new Error("TESTNET_PAYOUT_WALLET_NOT_CONFIGURED");
+    if (!walletPrivateSeed) {
+      throw new Error("TESTNET_PAYOUT_WALLET_NOT_CONFIGURED");
+    }
     if (!/^G[A-Z2-7]{55}$/.test(appWallet)) {
       throw new Error("PI_TESTNET_APP_WALLET_INVALID");
     }
-    // The official SDK stores currentPayment on the client instance. Use a
-    // fresh instance per payout to avoid cross-request state races.
-    if (typeof createPiClient === "function") return createPiClient();
     const module = await import("pi-backend");
     const PiNetwork = module.default || module.PiNetwork;
     if (typeof PiNetwork !== "function") {
@@ -125,34 +137,25 @@ function createTestnetA2UPayout(options) {
     return new PiNetwork(apiKey, walletPrivateSeed);
   }
 
-  async function persistId(requestRow, sourceType, paymentId) {
-    await persistPaymentId({
-      requestRow: requestRow,
-      sourceType: sourceType,
-      paymentId: paymentId
-    });
-  }
-
-  async function submit(requestRow, piUid, sourceType) {
+  function expectedFor(requestRow, piUid, sourceType) {
     if (!requestRow || !clean(requestRow.id)) {
       throw new Error("A2U_WITHDRAWAL_ID_REQUIRED");
     }
-    if (clean(requestRow.network) !== "testnet") {
+    if (clean(requestRow.network).toLowerCase() !== "testnet") {
       throw new Error("A2U_TESTNET_ONLY");
     }
     if (!["staker_withdrawal", "project_owner_withdrawal"].includes(sourceType)) {
       throw new Error("A2U_WITHDRAWAL_SOURCE_INVALID");
     }
 
-    const uid = clean(piUid);
+    const uid = clean(piUid || requestRow.pi_uid);
     const walletAddress = clean(requestRow.wallet_address).toUpperCase();
-    const amount = amount7(
-      sourceType === "project_owner_withdrawal"
+    const rawAmount = sourceType === "project_owner_withdrawal"
+      ? requestRow.requested_amount
+      : (requestRow.net_amount == null
         ? requestRow.requested_amount
-        : (requestRow.net_amount == null
-          ? requestRow.requested_amount
-          : requestRow.net_amount)
-    );
+        : requestRow.net_amount);
+    const amount = amount7(rawAmount);
 
     if (!uid) throw new Error("PI_A2U_USER_UID_REQUIRED");
     if (!/^G[A-Z2-7]{55}$/.test(walletAddress)) {
@@ -160,127 +163,234 @@ function createTestnetA2UPayout(options) {
     }
     if (amount === null) throw new Error("PI_A2U_AMOUNT_INVALID");
 
-    const expected = {
+    return {
       withdrawalId: clean(requestRow.id),
-      sourceType: sourceType,
+      sourceType,
       piUid: uid,
-      walletAddress: walletAddress,
-      amount: amount
+      walletAddress,
+      amount,
     };
-    const metadata = {
+  }
+
+  function makeMetadata(expected) {
+    return {
       albukhr_app: "ALBUKHR",
       network: "testnet",
       withdrawal_id: expected.withdrawalId,
-      source_type: sourceType
+      source_type: expected.sourceType,
     };
+  }
 
-    const client = await getClient();
-    let paymentId = clean(requestRow.a2u_payment_id);
-    let payment = null;
-    let recovered = false;
+  async function persistId(requestRow, sourceType, paymentId) {
+    await persistPaymentId({ requestRow, sourceType, paymentId });
+  }
 
-    if (paymentId) {
-      payment = await client.getPayment(paymentId);
-    } else {
-      let incomplete;
-      try {
-        incomplete = await client.getIncompleteServerPayments();
-      } catch (_) {
-        throw new Error("PI_A2U_INCOMPLETE_PAYMENT_LOOKUP_FAILED");
-      }
-      incomplete = Array.isArray(incomplete) ? incomplete : [];
-      if (incomplete.length > 0) {
-        const matching = incomplete.find((candidate) =>
-          metadataMatches(candidate, expected)
-        );
-        if (!matching) throw new Error("PI_A2U_OTHER_INCOMPLETE_PAYMENT");
-        payment = matching;
-        paymentId = paymentIdOf(payment);
-        if (!paymentId) throw new Error("PI_A2U_INCOMPLETE_PAYMENT_ID_MISSING");
-        recovered = true;
-      } else {
-        try {
-          paymentId = clean(await client.createPayment({
-            amount: amount,
-            memo: "ALBUKHR Testnet withdrawal",
-            metadata: metadata,
-            uid: uid
-          }));
-        } catch (error) {
-          // Pi can report an ongoing payment if the create response was lost.
-          // Re-read the incomplete payment and resume only our matching request.
-          let latest = [];
-          try { latest = await client.getIncompleteServerPayments(); } catch (_) {}
-          const matching = (Array.isArray(latest) ? latest : []).find((candidate) =>
-            metadataMatches(candidate, expected)
-          );
-          if (!matching) {
-            const code = clean(error && (error.code || error.message));
-            throw new Error(code === "ongoing_payment_found"
-              ? "PI_A2U_OTHER_INCOMPLETE_PAYMENT"
-              : "PI_A2U_PAYMENT_CREATE_FAILED");
-          }
-          payment = matching;
-          paymentId = paymentIdOf(payment);
-          recovered = true;
-        }
-      }
+  async function persistTransaction(requestRow, sourceType, paymentId, txid) {
+    await persistTxid({ requestRow, sourceType, paymentId, txid });
+  }
 
-      if (!paymentId) throw new Error("PI_A2U_PAYMENT_ID_MISSING");
-
-      // Persist the Pi identifier before any blockchain submission.
-      await persistId(requestRow, sourceType, paymentId);
-      if (!payment) payment = await client.getPayment(paymentId);
+  async function locateOrCreate(requestRow, expected, client) {
+    const storedId = clean(requestRow.a2u_payment_id);
+    if (storedId) {
+      const payment = await client.getPayment(storedId);
+      return { paymentId: storedId, payment, existedBefore: true, recovered: false };
     }
 
-    verifyPayment(payment, expected);
-
-    let txid = paymentTxid(payment);
-    if (!txid) {
-      txid = clean(await client.submitPayment(paymentId));
-      if (!txid) throw new Error("PI_A2U_TRANSACTION_ID_MISSING");
+    let incomplete;
+    try {
+      incomplete = await client.getIncompleteServerPayments();
+    } catch (_) {
+      throw new Error("PI_A2U_INCOMPLETE_PAYMENT_LOOKUP_FAILED");
     }
 
-    // If a previous submit succeeded but its response was lost, this read
-    // exposes the existing txid and prevents a second submission.
-    payment = await client.getPayment(paymentId);
+    incomplete = Array.isArray(incomplete) ? incomplete : [];
+    if (incomplete.length > 0) {
+      const matches = incomplete.filter((candidate) => metadataMatches(candidate, expected));
+      if (matches.length !== 1) {
+        throw new Error(matches.length > 1
+          ? "PI_A2U_MULTIPLE_MATCHING_INCOMPLETE_PAYMENTS"
+          : "PI_A2U_OTHER_INCOMPLETE_PAYMENT");
+      }
+      const payment = matches[0];
+      const paymentId = paymentIdOf(payment);
+      if (!paymentId) throw new Error("PI_A2U_INCOMPLETE_PAYMENT_ID_MISSING");
+      await persistId(requestRow, expected.sourceType, paymentId);
+      return { paymentId, payment, existedBefore: false, recovered: true };
+    }
+
+    let paymentId;
+    try {
+      paymentId = clean(await client.createPayment({
+        amount: expected.amount,
+        memo: "ALBUKHR Testnet withdrawal",
+        metadata: makeMetadata(expected),
+        uid: expected.piUid,
+      }));
+    } catch (error) {
+      // Recover only this request's payment if the create response was lost.
+      let latest = [];
+      try { latest = await client.getIncompleteServerPayments(); } catch (_) {}
+      const matches = (Array.isArray(latest) ? latest : [])
+        .filter((candidate) => metadataMatches(candidate, expected));
+      if (matches.length !== 1) {
+        const code = clean(error && (error.code || error.message));
+        throw new Error(code === "ongoing_payment_found"
+          ? "PI_A2U_OTHER_INCOMPLETE_PAYMENT"
+          : "PI_A2U_PAYMENT_CREATE_FAILED");
+      }
+      const payment = matches[0];
+      paymentId = paymentIdOf(payment);
+      if (!paymentId) throw new Error("PI_A2U_INCOMPLETE_PAYMENT_ID_MISSING");
+      await persistId(requestRow, expected.sourceType, paymentId);
+      return { paymentId, payment, existedBefore: false, recovered: true };
+    }
+
+    if (!paymentId) throw new Error("PI_A2U_PAYMENT_ID_MISSING");
+    // This write must finish before submitPayment is allowed to run.
+    await persistId(requestRow, expected.sourceType, paymentId);
+    const payment = await client.getPayment(paymentId);
+    return { paymentId, payment, existedBefore: false, recovered: false };
+  }
+
+  async function completeAndVerify(client, paymentId, txid, expected) {
+    let payment = await client.getPayment(paymentId);
     verifyPayment(payment, expected);
 
-    const recordedTxid = paymentTxid(payment);
-    if (recordedTxid && recordedTxid !== txid) {
+    const existingTxid = paymentTxid(payment);
+    if (existingTxid && existingTxid !== txid) {
       throw new Error("PI_A2U_TRANSACTION_ID_MISMATCH");
+    }
+    if (!existingTxid) {
+      throw new Error("PI_A2U_TXID_NOT_LINKED_YET");
     }
 
     if (!isDeveloperCompleted(payment)) {
       try {
-        payment = await client.completePayment(paymentId, txid);
+        await client.completePayment(paymentId, txid);
       } catch (_) {
-        // Completion may have succeeded upstream while its response was lost.
-        payment = await client.getPayment(paymentId).catch(() => null);
-        if (!isDeveloperCompleted(payment)) {
-          throw new Error("PI_A2U_COMPLETION_PENDING");
-        }
+        // Complete may have succeeded upstream while its response was lost.
       }
-    } else {
-      payment = await client.getPayment(paymentId);
     }
 
+    payment = await client.getPayment(paymentId);
     verifyPayment(payment, expected);
     if (!isDeveloperCompleted(payment) ||
         !isTransactionVerified(payment) ||
         paymentTxid(payment) !== txid) {
       throw new Error("PI_A2U_PAYMENT_NOT_FULLY_VERIFIED");
     }
+    return payment;
+  }
 
+  async function submit(requestRow, piUid, sourceType) {
+    const expected = expectedFor(requestRow, piUid, sourceType);
+    const client = await getClient();
+    const located = await locateOrCreate(requestRow, expected, client);
+    const paymentId = located.paymentId;
+    let payment = verifyPayment(located.payment, expected);
+    let txid = paymentTxid(payment);
+
+    if (txid) {
+      // Payment may have been submitted before a server crash. Persist the
+      // Pi-reported txid before attempting completion.
+      await persistTransaction(requestRow, sourceType, paymentId, txid);
+    } else {
+      if (located.existedBefore) {
+        // An already-persisted ID with no Pi-linked txid is ambiguous: a prior
+        // submit may still be propagating. Never auto-submit it a second time.
+        throw new Error("PI_A2U_SUBMISSION_OUTCOME_UNCERTAIN");
+      }
+
+      try {
+        txid = clean(await client.submitPayment(paymentId));
+      } catch (submitError) {
+        // The submit response may have been lost after Pi accepted the tx.
+        // Read the same payment ID; do not create or submit another ID.
+        payment = await client.getPayment(paymentId).catch(() => null);
+        verifyPayment(payment, expected);
+        txid = paymentTxid(payment);
+        if (!txid) {
+          throw new Error("PI_A2U_SUBMISSION_OUTCOME_UNCERTAIN");
+        }
+      }
+
+      if (!txid) throw new Error("PI_A2U_TRANSACTION_ID_MISSING");
+      // Critical ordering: txid is recorded before completePayment.
+      await persistTransaction(requestRow, sourceType, paymentId, txid);
+    }
+
+    await completeAndVerify(client, paymentId, txid, expected);
     return {
-      txid: txid,
-      paymentId: paymentId,
+      txid,
+      paymentId,
       memo: paymentId,
-      reconciled: recovered || Boolean(requestRow.a2u_payment_id)
+      reconciled: Boolean(located.recovered || located.existedBefore),
     };
   }
 
-  return Object.freeze({ submit: submit });
+  async function reconcile(requestRow, piUid, sourceType) {
+    const expected = expectedFor(requestRow, piUid, sourceType);
+    const client = await getClient();
+    let paymentId = clean(requestRow.a2u_payment_id);
+
+    if (!paymentId) {
+      let incomplete;
+      try {
+        incomplete = await client.getIncompleteServerPayments();
+      } catch (_) {
+        throw new Error("PI_A2U_INCOMPLETE_PAYMENT_LOOKUP_FAILED");
+      }
+      const matches = (Array.isArray(incomplete) ? incomplete : [])
+        .filter((candidate) => metadataMatches(candidate, expected));
+      if (matches.length === 0) {
+        return { payoutFound: false, pending: false, txid: null, paymentId: null };
+      }
+      if (matches.length !== 1) {
+        throw new Error("PI_A2U_MULTIPLE_MATCHING_INCOMPLETE_PAYMENTS");
+      }
+      paymentId = paymentIdOf(matches[0]);
+      if (!paymentId) throw new Error("PI_A2U_INCOMPLETE_PAYMENT_ID_MISSING");
+      await persistId(requestRow, sourceType, paymentId);
+    }
+
+    let payment = await client.getPayment(paymentId);
+    verifyPayment(payment, expected);
+    let txid = paymentTxid(payment);
+
+    if (!txid) {
+      return { payoutFound: false, pending: true, txid: null, paymentId };
+    }
+
+    const storedTxid = clean(requestRow.txid);
+    if (storedTxid && storedTxid !== txid) {
+      throw new Error("PI_A2U_STORED_TXID_MISMATCH");
+    }
+    await persistTransaction(requestRow, sourceType, paymentId, txid);
+
+    if (!isTransactionVerified(payment)) {
+      return { payoutFound: false, pending: true, txid, paymentId };
+    }
+
+    if (!isDeveloperCompleted(payment)) {
+      try {
+        await client.completePayment(paymentId, txid);
+      } catch (_) {
+        // Re-read below to determine whether Pi accepted completion.
+      }
+    }
+
+    payment = await client.getPayment(paymentId);
+    verifyPayment(payment, expected);
+    if (!isDeveloperCompleted(payment) ||
+        !isTransactionVerified(payment) ||
+        paymentTxid(payment) !== txid) {
+      return { payoutFound: false, pending: true, txid, paymentId };
+    }
+
+    return { payoutFound: true, pending: false, txid, paymentId, reconciled: true };
+  }
+
+  return { submit, reconcile };
 }
 
 module.exports = createTestnetA2UPayout;
