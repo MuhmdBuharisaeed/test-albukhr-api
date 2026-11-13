@@ -44,8 +44,21 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install locked dependencies
-        run: npm ci
+      - name: Install dependencies
+  run: npm install --no-audit --no-fund
+
+- name: Verify official Pi Backend SDK
+  run: |
+    node -e "import('pi-backend').then((m) => {
+      const PiNetwork = m.default || m.PiNetwork;
+      if (typeof PiNetwork !== 'function') {
+        throw new Error('PI_BACKEND_SDK_EXPORT_INVALID');
+      }
+      console.log('Pi backend SDK import OK');
+    }).catch((error) => {
+      console.error(error);
+      process.exit(1);
+    });"
 
       - name: Check server syntax
         run: node --check server.js
