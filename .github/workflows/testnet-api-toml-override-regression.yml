@@ -1,3 +1,4 @@
+
 name: ALBUKHR Testnet API TOML Security Override Regression
 
 on:
@@ -8,7 +9,9 @@ on:
       - 'package-lock.json'
       - 'server.js'
       - 'tests/testnet-stellar-sdk-toml-override-smoke.js'
+      - 'tests/testnet-payout-wallet-guard-smoke.js'
       - '.github/workflows/testnet-api-toml-override-regression.yml'
+
   pull_request:
     branches: [main]
     paths:
@@ -16,7 +19,9 @@ on:
       - 'package-lock.json'
       - 'server.js'
       - 'tests/testnet-stellar-sdk-toml-override-smoke.js'
+      - 'tests/testnet-payout-wallet-guard-smoke.js'
       - '.github/workflows/testnet-api-toml-override-regression.yml'
+
   workflow_dispatch:
 
 permissions:
@@ -28,7 +33,7 @@ concurrency:
 
 jobs:
   dependency-regression:
-    name: Resolve TOML override and verify Stellar SDK compatibility
+    name: Verify Stellar SDK and Testnet Payout Wallet
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -52,10 +57,16 @@ jobs:
           node -e "const p=require('toml/package.json'); if(p.version!=='5.0.1') { console.error('Unexpected toml version:',p.version); process.exit(1); }"
 
       - name: Check JavaScript syntax
-        run: node --check tests/testnet-stellar-sdk-toml-override-smoke.js
+        run: |
+          node --check server.js
+          node --check tests/testnet-stellar-sdk-toml-override-smoke.js
+          node --check tests/testnet-payout-wallet-guard-smoke.js
 
       - name: Run Stellar SDK and TOML compatibility smoke test
         run: node tests/testnet-stellar-sdk-toml-override-smoke.js
+
+      - name: Run Testnet payout-wallet guard regression
+        run: node tests/testnet-payout-wallet-guard-smoke.js
 
       - name: Audit dependencies and retain evidence
         if: always()
