@@ -12,6 +12,7 @@ on:
       - "testnet-a2u-service.js"
       - "tests/testnet-a2u-payout-smoke.js"
       - "tests/testnet-a2u-persistence-smoke.js"
+      - "tests/testnet-pi-backend-sdk-smoke.js"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/testnet-a2u-withdrawal-regression.yml"
@@ -46,20 +47,13 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm install --ignore-scripts --no-audit --no-fund
 
-      - name: Verify official Pi Backend SDK
-        run: |
-          node -e "import('pi-backend').then((m) => {
-            const PiNetwork = m.default || m.PiNetwork;
-            if (typeof PiNetwork !== 'function') {
-              throw new Error('PI_BACKEND_SDK_EXPORT_INVALID');
-            }
-            console.log('Pi backend SDK import OK');
-          }).catch((error) => {
-            console.error(error);
-            process.exit(1);
-          });"
+      - name: Check Pi Backend SDK smoke test syntax
+        run: node --check tests/testnet-pi-backend-sdk-smoke.js
+
+      - name: Verify official Pi Backend SDK CommonJS export
+        run: node tests/testnet-pi-backend-sdk-smoke.js
 
       - name: Check server syntax
         run: node --check server.js
