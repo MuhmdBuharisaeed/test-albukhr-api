@@ -472,14 +472,42 @@ function withdrawalMemo(
 
 function payoutWalletKeypair() {
   if (!WALLET_PRIVATE_SEED) {
-    throw new Error(
-      "WALLET_NOT_CONFIGURED"
-    );
+    throw new Error("WALLET_NOT_CONFIGURED");
   }
 
-  return StellarSdk.Keypair.fromSecret(
-    WALLET_PRIVATE_SEED
+  const configuredPublicKey = clean(
+    CONFIGURED_TESTNET_APP_WALLET
   );
+
+  // Fail closed unless the configured wallet is a valid Stellar G-address.
+  if (!/^G[A-Z2-7]{55}$/.test(configuredPublicKey)) {
+    throw new Error("TESTNET_PAYOUT_WALLET_NOT_CONFIGURED");
+  }
+
+  let keypair;
+
+  try {
+    keypair = StellarSdk.Keypair.fromSecret(
+      WALLET_PRIVATE_SEED
+    );
+  } catch (_) {
+    // Never expose the private seed or the SDK's raw secret-related error.
+    throw new Error("WALLET_PRIVATE_SEED_INVALID");
+  }
+
+  const derivedPublicKey = clean(
+    keypair.publicKey()
+  );
+
+  // Require both the startup readiness check and a fresh exact key match.
+  if (
+    TESTNET_PAYOUT_WALLET_CONFIGURED !== true ||
+    derivedPublicKey !== configuredPublicKey
+  ) {
+    throw new Error("TESTNET_PAYOUT_WALLET_MISMATCH");
+  }
+
+  return keypair;
 }
 
 /* ============================================================
