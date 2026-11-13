@@ -4,6 +4,14 @@ const axios = require("axios");
 const crypto = require("crypto");
 const { createClient } = require("@supabase/supabase-js");
 const StellarSdk = require("stellar-sdk");
+/*
+ * ALBUKHR TESTNET A2U SERVICE
+ *
+ * Loaded as a staged integration dependency.
+ * Existing payout routes remain unchanged in this stage.
+ */
+const createTestnetA2UService =
+  require("./testnet-a2u-service");
 
 const createTestnetLiquidityPaymentRouter =
   require("./testnet-liquidity-payment-router");
@@ -95,6 +103,23 @@ if (WALLET_PRIVATE_SEED && CONFIGURED_TESTNET_APP_WALLET) {
     // Keep readiness false if the keypair is invalid.
   }
 }
+
+/*
+ * ALBUKHR TESTNET A2U SERVICE INITIALIZATION
+ *
+ * Safety:
+ * - Uses the existing Testnet Supabase client.
+ * - Does not create a Pi payment during initialization.
+ * - Does not submit a blockchain transaction.
+ * - Does not change withdrawal records during initialization.
+ * - Existing Stellar payout helpers remain untouched in this stage.
+ */
+const testnetA2UService = createTestnetA2UService({
+  supabase,
+  apiKey: PI_API_KEY,
+  walletPrivateSeed: WALLET_PRIVATE_SEED,
+  appWallet: CONFIGURED_TESTNET_APP_WALLET,
+});
 
 app.disable("x-powered-by");
 
