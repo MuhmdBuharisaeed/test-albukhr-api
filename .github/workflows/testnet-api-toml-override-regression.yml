@@ -18,6 +18,7 @@ on:
       - "tests/testnet-payout-reconciliation-pagination-smoke.js"
       - "tests/owner-withdrawal-fee-guard-smoke.js"
       - "tests/owner-withdrawal-settlement-hardening-smoke.js"
+      - "tests/owner-withdrawal-reconciliation-lookup-smoke.js"
       - ".github/workflows/testnet-api-toml-override-regression.yml"
 
   pull_request:
@@ -36,6 +37,7 @@ on:
       - "tests/testnet-payout-reconciliation-pagination-smoke.js"
       - "tests/owner-withdrawal-fee-guard-smoke.js"
       - "tests/owner-withdrawal-settlement-hardening-smoke.js"
+      - "tests/owner-withdrawal-reconciliation-lookup-smoke.js"
       - ".github/workflows/testnet-api-toml-override-regression.yml"
 
   workflow_dispatch:
@@ -97,6 +99,7 @@ jobs:
           node --check tests/testnet-payout-reconciliation-pagination-smoke.js
           node --check tests/owner-withdrawal-fee-guard-smoke.js
           node --check tests/owner-withdrawal-settlement-hardening-smoke.js
+          node --check tests/owner-withdrawal-reconciliation-lookup-smoke.js
 
       - name: Verify legacy Stellar dependency graph
         run: node tests/testnet-legacy-stellar-dependency-smoke.js
@@ -118,6 +121,9 @@ jobs:
 
       - name: Verify owner withdrawal settlement hardening
         run: node tests/owner-withdrawal-settlement-hardening-smoke.js
+
+      - name: Verify owner withdrawal reconciliation lookup
+        run: node tests/owner-withdrawal-reconciliation-lookup-smoke.js
 
       - name: Verify bounded Horizon payout reconciliation pagination
         run: node tests/testnet-payout-reconciliation-pagination-smoke.js
