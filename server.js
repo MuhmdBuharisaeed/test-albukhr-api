@@ -614,6 +614,79 @@ async function findTestnetPayoutByMemo(
   return null;
 }
 
+/*
+ * VERIFY A NEWLY SUBMITTED TESTNET PAYOUT
+ *
+ * A successful submitTransaction response alone is not enough to settle
+ * a withdrawal. Re-read the transaction and its payment operation from
+ * Pi Testnet Horizon, and require the exact submitted TXID to match.
+ *
+ * If Horizon indexing is delayed, retry lookup only. Never resubmit.
+ */
+async function verifySubmittedTestnetPayout(
+  sourcePublicKey,
+  memoText,
+  expectedPayout,
+  submittedTxid
+) {
+  const expectedTxid = clean(submittedTxid).toLowerCase();
+
+  if (!/^[a-f0-9]{64}$/.test(expectedTxid)) {
+    throw new Error("TESTNET_PAYOUT_SUBMITTED_TXID_INVALID");
+  }
+
+  if (!clean(sourcePublicKey) || !clean(memoText)) {
+    throw new Error("TESTNET_PAYOUT_EXPECTED_DETAILS_REQUIRED");
+  }
+
+  // Bounded retries for Horizon indexing delay: 6 lookups, 6.75 seconds max.
+  // Only a "not found yet" result is retried. Lookup errors fail closed.
+  const retryDelaysMs = [250, 500, 1000, 2000, 3000];
+
+  for (
+    let attempt = 0;
+    attempt <= retryDelaysMs.length;
+    attempt += 1
+  ) {
+    const verifiedPayout = await findTestnetPayoutByMemo(
+      sourcePublicKey,
+      memoText,
+      expectedPayout
+    );
+
+    if (verifiedPayout) {
+      const verifiedTxid = clean(
+        verifiedPayout.hash
+      ).toLowerCase();
+
+      if (!/^[a-f0-9]{64}$/.test(verifiedTxid)) {
+        throw new Error("TESTNET_PAYOUT_VERIFIED_TXID_INVALID");
+      }
+
+      if (verifiedTxid !== expectedTxid) {
+        throw new Error("TESTNET_PAYOUT_TXID_MISMATCH");
+      }
+
+      return verifiedPayout;
+    }
+
+    if (attempt < retryDelaysMs.length) {
+      await new Promise((resolve) => {
+        setTimeout(resolve, retryDelaysMs[attempt]);
+      });
+    }
+  }
+
+  // Do not settle. The payout outcome remains uncertain until reconciliation.
+  const verificationError = new Error(
+    "TESTNET_PAYOUT_NOT_VERIFIED_AFTER_SUBMISSION"
+  );
+
+  verificationError.status = 503;
+
+  throw verificationError;
+}
+
 async function findTestnetWithdrawalPayoutByMemo(requestId) {
   if (!clean(requestId)) {
     throw new Error("REQUEST_ID_REQUIRED");
