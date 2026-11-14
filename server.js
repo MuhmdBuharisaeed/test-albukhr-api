@@ -991,17 +991,35 @@ async function submitTestnetWithdrawalPayout(
     sourceKeypair
   );
 
-  const result =
-    await server.submitTransaction(
-      transaction
-    );
+  
+  const result = await server.submitTransaction(
+    transaction
+  );
+
+  const submittedTxid = clean(
+    result && result.hash
+  );
+
+  if (!/^[a-f0-9]{64}$/i.test(submittedTxid)) {
+    throw new Error("TESTNET_PAYOUT_SUBMITTED_TXID_INVALID");
+  }
+
+  // Do not return a payout TXID until Horizon verifies the exact transfer.
+  const verifiedPayout = await verifySubmittedTestnetPayout(
+    sourcePublicKey,
+    memoText,
+    {
+      wallet_address: requestRow.wallet_address,
+      amount,
+    },
+    submittedTxid
+  );
 
   return {
-    txid: result.hash,
+    txid: clean(verifiedPayout.hash).toLowerCase(),
     reconciled: false,
     memo: memoText
   };
-}
 
 /* ============================================================
    CREATE + CLAIM WITHDRAWAL
