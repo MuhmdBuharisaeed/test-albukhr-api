@@ -74,6 +74,7 @@ function makePage(records, nextPage) {
   };
 }
 
+
 function harness(options = {}) {
   const state = {
     transactionPageCalls: 0,
@@ -82,6 +83,44 @@ function harness(options = {}) {
     transactionLimits: [],
     operationLimits: [],
   };
+
+  function connectPages(pages, onNext) {
+    const connected = [];
+
+    for (let index = 0; index < pages.length; index += 1) {
+      const originalPage = pages[index];
+
+      connected.push({
+        records: originalPage.records || [],
+
+        async next() {
+          onNext();
+
+          if (index + 1 < pages.length) {
+            return connected[index + 1];
+          }
+
+          return originalPage.next();
+        },
+      });
+    }
+
+    return connected;
+  }
+
+  const transactionPages = connectPages(
+    options.transactionPages || [],
+    () => {
+      state.transactionPageCalls += 1;
+    }
+  );
+
+  const operationPages = connectPages(
+    options.operationPages || [],
+    () => {
+      state.operationPageCalls += 1;
+    }
+  );
 
   const fakeServer = {
     transactions() {
@@ -105,7 +144,7 @@ function harness(options = {}) {
                         throw options.transactionError;
                       }
 
-                      return options.transactionPages[
+                      return transactionPages[
                         state.transactionPageCalls - 1
                       ] || makePage([], null);
                     },
@@ -135,7 +174,7 @@ function harness(options = {}) {
                     throw options.operationError;
                   }
 
-                  return options.operationPages[
+                  return operationPages[
                     state.operationPageCalls - 1
                   ] || makePage([], null);
                 },
