@@ -346,13 +346,32 @@ async function expectCode(
         REQUEST_ID
       );
 
+        assert.ok(
+      result && typeof result === "object",
+      "VERIFIED_OWNER_PAYOUT_RESULT_REQUIRED"
+    );
+
+    assert.equal(
+      result.txid,
+      TXID,
+      "VERIFIED_PAYOUT_TXID_MISMATCH"
+    );
+
+    assert.equal(
+      result.memo,
+      MEMO,
+      "VERIFIED_PAYOUT_MEMO_MISMATCH"
+    );
+
+    assert.equal(
+      result.reconciled,
+      true,
+      "OWNER_PAYOUT_MUST_BE_MARKED_RECONCILED"
+    );
+
     assert.deepEqual(
-      result,
-      {
-        txid: TXID,
-        memo: MEMO,
-        reconciled: true,
-      }
+      Object.keys(result).sort(),
+      ["memo", "reconciled", "txid"]
     );
 
     assert.equal(
