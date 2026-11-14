@@ -1,3 +1,4 @@
+
 name: ALBUKHR Testnet Legacy Stellar Dependency Regression
 
 on:
@@ -9,6 +10,7 @@ on:
       - 'server.js'
       - 'tests/testnet-stellar-sdk-toml-override-smoke.js'
       - 'tests/testnet-payout-wallet-guard-smoke.js'
+      - 'tests/testnet-payout-post-submit-verification-smoke.js'
       - 'tests/testnet-legacy-stellar-dependency-smoke.js'
       - '.github/workflows/testnet-api-toml-override-regression.yml'
 
@@ -20,6 +22,7 @@ on:
       - 'server.js'
       - 'tests/testnet-stellar-sdk-toml-override-smoke.js'
       - 'tests/testnet-payout-wallet-guard-smoke.js'
+      - 'tests/testnet-payout-post-submit-verification-smoke.js'
       - 'tests/testnet-legacy-stellar-dependency-smoke.js'
       - '.github/workflows/testnet-api-toml-override-regression.yml'
 
@@ -63,6 +66,7 @@ jobs:
           node --check server.js
           node --check tests/testnet-stellar-sdk-toml-override-smoke.js
           node --check tests/testnet-payout-wallet-guard-smoke.js
+          node --check tests/testnet-payout-post-submit-verification-smoke.js
           node --check tests/testnet-legacy-stellar-dependency-smoke.js
 
       - name: Run legacy Stellar dependency graph contract
@@ -73,6 +77,9 @@ jobs:
 
       - name: Run Testnet payout-wallet guard regression
         run: node tests/testnet-payout-wallet-guard-smoke.js
+
+      - name: Run Testnet post-submit Horizon payout verification regression
+        run: node tests/testnet-payout-post-submit-verification-smoke.js
 
       - name: Audit dependencies and retain evidence
         if: always()
