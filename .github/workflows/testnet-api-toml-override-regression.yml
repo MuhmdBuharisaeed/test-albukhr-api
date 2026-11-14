@@ -1,5 +1,4 @@
-
-name: ALBUKHR Testnet API TOML Security Override Regression
+name: ALBUKHR Testnet Legacy Stellar Dependency Regression
 
 on:
   push:
@@ -10,6 +9,7 @@ on:
       - 'server.js'
       - 'tests/testnet-stellar-sdk-toml-override-smoke.js'
       - 'tests/testnet-payout-wallet-guard-smoke.js'
+      - 'tests/testnet-legacy-stellar-dependency-smoke.js'
       - '.github/workflows/testnet-api-toml-override-regression.yml'
 
   pull_request:
@@ -20,6 +20,7 @@ on:
       - 'server.js'
       - 'tests/testnet-stellar-sdk-toml-override-smoke.js'
       - 'tests/testnet-payout-wallet-guard-smoke.js'
+      - 'tests/testnet-legacy-stellar-dependency-smoke.js'
       - '.github/workflows/testnet-api-toml-override-regression.yml'
 
   workflow_dispatch:
@@ -28,12 +29,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: testnet-api-toml-override-${{ github.ref }}
+  group: testnet-api-legacy-stellar-regression-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   dependency-regression:
-    name: Verify Stellar SDK and Testnet Payout Wallet
+    name: Verify legacy Stellar payout and dependency security
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -45,9 +46,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: npm
 
-      - name: Install dependencies without lifecycle scripts
-        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Install exact committed dependency tree
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Verify the resolved TOML version
         shell: bash
@@ -61,6 +63,10 @@ jobs:
           node --check server.js
           node --check tests/testnet-stellar-sdk-toml-override-smoke.js
           node --check tests/testnet-payout-wallet-guard-smoke.js
+          node --check tests/testnet-legacy-stellar-dependency-smoke.js
+
+      - name: Run legacy Stellar dependency graph contract
+        run: node tests/testnet-legacy-stellar-dependency-smoke.js
 
       - name: Run Stellar SDK and TOML compatibility smoke test
         run: node tests/testnet-stellar-sdk-toml-override-smoke.js
@@ -82,25 +88,40 @@ jobs:
           const fs = require('node:fs');
           const report = JSON.parse(fs.readFileSync('npm-audit.json', 'utf8'));
           const vulnerabilities = report.vulnerabilities || {};
-          const affectedTomlChain = ['toml', 'stellar-sdk'].filter(name =>
-            Object.prototype.hasOwnProperty.call(vulnerabilities, name)
-          );
           const counts = report.metadata?.vulnerabilities || {};
+
           const result = {
-            audit_exit_code: Number(fs.readFileSync('npm-audit-exit-code.txt', 'utf8').trim()),
+            audit_exit_code: Number(
+              fs.readFileSync('npm-audit-exit-code.txt', 'utf8').trim()
+            ),
             vulnerability_counts: counts,
-            toml_or_stellar_sdk_still_flagged: affectedTomlChain
+            affected_packages: Object.entries(vulnerabilities).map(([name, item]) => ({
+              package: name,
+              severity: item.severity,
+              direct: item.isDirect,
+              range: item.range,
+              fixAvailable: item.fixAvailable,
+              nodes: item.nodes
+            }))
           };
-          fs.writeFileSync('npm-audit-summary.json', JSON.stringify(result, null, 2));
+
+          fs.writeFileSync(
+            'npm-audit-summary.json',
+            JSON.stringify(result, null, 2)
+          );
+
           console.log(JSON.stringify(result, null, 2));
-          if (affectedTomlChain.length) process.exitCode = 1;
+
+          if ((counts.high || 0) > 0 || (counts.critical || 0) > 0) {
+            process.exitCode = 1;
+          }
           NODE
 
       - name: Upload dependency verification evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: albukhr-testnet-api-toml-override-verification
+          name: albukhr-testnet-legacy-stellar-verification
           path: |
             package.json
             package-lock.json
