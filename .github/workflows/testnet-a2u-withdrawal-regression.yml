@@ -1,5 +1,4 @@
-
-name: Testnet A2U Withdrawal Regression
+name: Testnet A2U Deferred Adapter Regression (Mock Only)
 
 on:
   push:
@@ -12,7 +11,7 @@ on:
       - "testnet-a2u-service.js"
       - "tests/testnet-a2u-payout-smoke.js"
       - "tests/testnet-a2u-persistence-smoke.js"
-      - "tests/testnet-pi-backend-sdk-smoke.js"
+      - "tests/testnet-legacy-stellar-dependency-smoke.js"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/testnet-a2u-withdrawal-regression.yml"
@@ -27,12 +26,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: testnet-a2u-withdrawal-regression-${{ github.ref }}
+  group: testnet-a2u-mock-regression-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   testnet-a2u-regression:
-    name: Testnet A2U Safety Regression
+    name: A2U mock adapter checks only; official SDK deferred
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -46,14 +45,11 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies
-        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Install exact committed dependency tree
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Check Pi Backend SDK smoke test syntax
-        run: node --check tests/testnet-pi-backend-sdk-smoke.js
-
-      - name: Verify official Pi Backend SDK CommonJS export
-        run: node tests/testnet-pi-backend-sdk-smoke.js
+      - name: Verify legacy Stellar dependency lock contract
+        run: node tests/testnet-legacy-stellar-dependency-smoke.js
 
       - name: Check server syntax
         run: node --check server.js
@@ -61,14 +57,14 @@ jobs:
       - name: Check outflow router syntax
         run: node --check testnet-outflow-fee-router.js
 
-      - name: Check A2U adapter syntax
+      - name: Check deferred A2U adapter syntax
         run: node --check testnet-a2u-payout.js
 
-      - name: Check A2U service syntax
+      - name: Check deferred A2U service syntax
         run: node --check testnet-a2u-service.js
 
-      - name: Run A2U payout smoke tests
+      - name: Run A2U payout mock tests
         run: node tests/testnet-a2u-payout-smoke.js
 
-      - name: Run A2U persistence smoke tests
+      - name: Run A2U persistence mock tests
         run: node tests/testnet-a2u-persistence-smoke.js
