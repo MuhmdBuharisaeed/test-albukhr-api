@@ -1020,6 +1020,7 @@ async function submitTestnetWithdrawalPayout(
     reconciled: false,
     memo: memoText
   };
+  }
 
 /* ============================================================
    CREATE + CLAIM WITHDRAWAL
