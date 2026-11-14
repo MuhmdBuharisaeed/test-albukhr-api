@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   dependency-audit:
-    name: Resolve and audit Testnet API dependencies
+    name: Audit the committed Testnet API dependency tree
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -24,16 +24,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: npm
 
-      - name: Resolve dependencies without lifecycle scripts
-        shell: bash
-        env:
-          npm_config_ignore_scripts: 'true'
-        run: |
-          set -euo pipefail
-          npm install --ignore-scripts --no-audit --no-fund
-          test -f package-lock.json
-          echo 'Resolved dependency lock generated for audit.'
+      - name: Install exact committed dependency tree
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Verify manifest and lockfile are aligned
+        run: node tests/testnet-legacy-stellar-dependency-smoke.js
 
       - name: Run npm security audit and retain full JSON
         if: always()
@@ -48,29 +45,43 @@ jobs:
           node <<'NODE'
           const fs = require('node:fs');
           const data = JSON.parse(fs.readFileSync('npm-audit.json', 'utf8'));
-          const counts = data.metadata && data.metadata.vulnerabilities
-            ? data.metadata.vulnerabilities
-            : {};
+          const counts = data.metadata?.vulnerabilities || {};
+
           const rows = Object.entries(data.vulnerabilities || {}).map(([name, item]) => ({
             package: name,
             severity: item.severity,
             direct: item.isDirect,
             range: item.range,
             fixAvailable: item.fixAvailable,
-            via: (item.via || []).map(v => typeof v === 'string' ? v : ({
-              title: v.title,
-              url: v.url,
-              range: v.range,
-              severity: v.severity
-            }))
+            nodes: item.nodes,
+            via: (item.via || []).map(v =>
+              typeof v === 'string' ? v : ({
+                title: v.title,
+                url: v.url,
+                range: v.range,
+                severity: v.severity
+              })
+            )
           }));
+
           const summary = {
-            audit_exit_code: Number(fs.readFileSync('npm-audit-exit-code.txt', 'utf8').trim()),
+            audit_exit_code: Number(
+              fs.readFileSync('npm-audit-exit-code.txt', 'utf8').trim()
+            ),
             vulnerability_counts: counts,
             affected_packages: rows
           };
-          fs.writeFileSync('npm-audit-summary.json', JSON.stringify(summary, null, 2));
+
+          fs.writeFileSync(
+            'npm-audit-summary.json',
+            JSON.stringify(summary, null, 2)
+          );
+
           console.log(JSON.stringify(summary, null, 2));
+
+          if ((counts.high || 0) > 0 || (counts.critical || 0) > 0) {
+            process.exitCode = 1;
+          }
           NODE
 
       - name: Save resolved dependency tree
