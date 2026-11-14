@@ -96,23 +96,6 @@ if (WALLET_PRIVATE_SEED && CONFIGURED_TESTNET_APP_WALLET) {
   }
 }
 
-/*
- * ALBUKHR TESTNET A2U SERVICE INITIALIZATION
- *
- * Safety:
- * - Uses the existing Testnet Supabase client.
- * - Does not create a Pi payment during initialization.
- * - Does not submit a blockchain transaction.
- * - Does not change withdrawal records during initialization.
- * - Existing Stellar payout helpers remain untouched in this stage.
- */
-const testnetA2UService = createTestnetA2UService({
-  supabase,
-  apiKey: PI_API_KEY,
-  walletPrivateSeed: WALLET_PRIVATE_SEED,
-  appWallet: CONFIGURED_TESTNET_APP_WALLET,
-});
-
 app.disable("x-powered-by");
 
 /* ============================================================
