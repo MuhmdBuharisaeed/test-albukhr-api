@@ -4,14 +4,6 @@ const axios = require("axios");
 const crypto = require("crypto");
 const { createClient } = require("@supabase/supabase-js");
 const StellarSdk = require("stellar-sdk");
-/*
- * ALBUKHR TESTNET A2U SERVICE
- *
- * Loaded as a staged integration dependency.
- * Existing payout routes remain unchanged in this stage.
- */
-const createTestnetA2UService =
-  require("./testnet-a2u-service");
 
 const createTestnetLiquidityPaymentRouter =
   require("./testnet-liquidity-payment-router");
