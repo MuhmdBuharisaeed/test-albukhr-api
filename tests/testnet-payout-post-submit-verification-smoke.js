@@ -76,6 +76,7 @@ function makeHarness(options = {}) {
     order: null,
     limit: null,
     operationTxid: null,
+    operationLimit: null,
   };
 
   const fakeServer = {
@@ -121,18 +122,24 @@ function makeHarness(options = {}) {
           state.operationTxid = hash;
 
           return {
-            async call() {
-              state.operationLookups += 1;
+            limit(count) {
+              state.operationLimit = count;
 
-              if (options.operationError) {
-                throw options.operationError;
-              }
+              return {
+                async call() {
+                  state.operationLookups += 1;
 
-              if (typeof options.operationProvider === "function") {
-                return options.operationProvider(hash, state);
-              }
+                  if (options.operationError) {
+                    throw options.operationError;
+                  }
 
-              return options.operations || { records: [] };
+                  if (typeof options.operationProvider === "function") {
+                    return options.operationProvider(hash, state);
+                  }
+
+                  return options.operations || { records: [] };
+                },
+              };
             },
           };
         },
@@ -219,6 +226,8 @@ async function expectCode(
     assert.equal(harness.state.sourceAccount, SOURCE);
     assert.equal(harness.state.order, "desc");
     assert.equal(harness.state.limit, 100);
+    assert.equal(harness.state.operationTxid, TXID);
+    assert.equal(harness.state.operationLimit, 200);
   }
 
   // 2. Horizon indexing delay is retried.
@@ -243,6 +252,7 @@ async function expectCode(
     assert.equal(result.hash, TXID);
     assert.equal(harness.state.transactionLookups, 3);
     assert.deepEqual(harness.state.delays, [250, 500]);
+    assert.equal(harness.state.operationLimit, 200);
   }
 
   // 3. Missing or malformed submitted TXID is rejected before Horizon lookup.
@@ -257,6 +267,7 @@ async function expectCode(
     );
 
     assert.equal(harness.state.transactionLookups, 0);
+    assert.equal(harness.state.operationLookups, 0);
   }
 
   // 4. A different TXID returned by Horizon is rejected.
@@ -352,6 +363,7 @@ async function expectCode(
 
     assert.equal(harness.state.transactionLookups, 1);
     assert.equal(harness.state.operationLookups, 1);
+    assert.equal(harness.state.operationLimit, 200);
   }
 
   // 9. The payout function must verify after submit and before returning.
@@ -426,6 +438,7 @@ async function expectCode(
     non_native_asset_rejected: true,
     failed_transaction_rejected: true,
     horizon_lookup_error_fails_closed: true,
+    operation_lookup_limit_verified: 200,
     settlement_remains_outside_payout_helper: true,
     real_network_requests: false,
     wallet_secrets_used: false,
