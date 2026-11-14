@@ -523,6 +523,7 @@ async function findTestnetPayoutByMemo(
   const expectedWallet = clean(
     expectedPayout && expectedPayout.wallet_address
   );
+
   const expectedAmount = numeric(
     expectedPayout && expectedPayout.amount
   );
@@ -537,74 +538,218 @@ async function findTestnetPayoutByMemo(
     throw new Error("TESTNET_PAYOUT_EXPECTED_DETAILS_REQUIRED");
   }
 
-  const page = await server
-    .transactions()
-    .forAccount(sourcePublicKey)
-    .order("desc")
-    .limit(TESTNET_WITHDRAWAL_RECONCILE_LIMIT)
-    .call();
+  // Bounded pagination: at most 5 transaction pages.
+  const MAX_TRANSACTION_PAGES = 5;
+
+  // Bounded pagination for operations belonging to one transaction.
+  const OPERATION_PAGE_LIMIT = 200;
+  const MAX_OPERATION_PAGES = 5;
+
+  let transactionPage;
+
+  try {
+    transactionPage = await server
+      .transactions()
+      .forAccount(sourcePublicKey)
+      .order("desc")
+      .limit(TESTNET_WITHDRAWAL_RECONCILE_LIMIT)
+      .call();
+  } catch (error) {
+    const lookupError = new Error(
+      "TESTNET_PAYOUT_TRANSACTION_LOOKUP_FAILED"
+    );
+    lookupError.status = 503;
+    throw lookupError;
+  }
 
   let memoMatchCouldNotBeVerified = false;
 
-  for (const tx of page.records || []) {
-    if (clean(tx.memo) !== memoText) {
-      continue;
-    }
+  for (
+    let transactionPageIndex = 0;
+    transactionPageIndex < MAX_TRANSACTION_PAGES;
+    transactionPageIndex += 1
+  ) {
+    const transactions = transactionPage.records || [];
 
-    if (tx.memo_type !== "text") {
+    for (const tx of transactions) {
+      if (clean(tx.memo) !== memoText) {
+        continue;
+      }
+
+      if (tx.memo_type !== "text") {
+        memoMatchCouldNotBeVerified = true;
+        continue;
+      }
+
+      // A failed transaction is not a completed payout.
+      if (tx.successful !== true) {
+        continue;
+      }
+
+      // The source must be the Testnet app payout wallet.
+      if (
+        clean(tx.source_account) !==
+        clean(sourcePublicKey)
+      ) {
+        memoMatchCouldNotBeVerified = true;
+        continue;
+      }
+
+      let operationPage;
+
+      try {
+        operationPage = await server
+          .operations()
+          .forTransaction(tx.hash)
+          .limit(OPERATION_PAGE_LIMIT)
+          .call();
+      } catch (error) {
+        const lookupError = new Error(
+          "TESTNET_PAYOUT_OPERATION_LOOKUP_FAILED"
+        );
+        lookupError.status = 503;
+        throw lookupError;
+      }
+
+      let validPaymentOperation = false;
+
+      for (
+        let operationPageIndex = 0;
+        operationPageIndex < MAX_OPERATION_PAGES;
+        operationPageIndex += 1
+      ) {
+        const operations = operationPage.records || [];
+
+        for (const operation of operations) {
+          const operationAmount = numeric(operation.amount);
+
+          const matchesExpectedPayment = (
+            operation.type === "payment" &&
+            operation.transaction_successful === true &&
+            operation.asset_type === "native" &&
+            clean(operation.from) === clean(sourcePublicKey) &&
+            clean(operation.to) === expectedWallet &&
+            operationAmount !== null &&
+            operationAmount.toFixed(7) ===
+              expectedAmount.toFixed(7)
+          );
+
+          if (matchesExpectedPayment) {
+            validPaymentOperation = true;
+            break;
+          }
+        }
+
+        if (validPaymentOperation) {
+          break;
+        }
+
+        // All operation pages have been scanned.
+        if (operationPageIndex === MAX_OPERATION_PAGES - 1) {
+          let probePage;
+
+          try {
+            probePage = await operationPage.next();
+          } catch (error) {
+            const lookupError = new Error(
+              "TESTNET_PAYOUT_OPERATION_LOOKUP_FAILED"
+            );
+            lookupError.status = 503;
+            throw lookupError;
+          }
+
+          if ((probePage.records || []).length > 0) {
+            throw Object.assign(
+              new Error(
+                "TESTNET_PAYOUT_RECONCILE_SCAN_INCOMPLETE"
+              ),
+              { status: 503 }
+            );
+          }
+
+          break;
+        }
+
+        if (typeof operationPage.next !== "function") {
+          break;
+        }
+
+        try {
+          operationPage = await operationPage.next();
+        } catch (error) {
+          const lookupError = new Error(
+            "TESTNET_PAYOUT_OPERATION_LOOKUP_FAILED"
+          );
+          lookupError.status = 503;
+          throw lookupError;
+        }
+
+        if ((operationPage.records || []).length === 0) {
+          break;
+        }
+      }
+
+      if (validPaymentOperation) {
+        return tx;
+      }
+
+      // A transaction uses the memo but does not match the expected payout.
+      // Never treat it as settled or automatically send another payment.
       memoMatchCouldNotBeVerified = true;
-      continue;
     }
 
-    // A failed transaction is not a completed payout.
-    if (tx.successful !== true) {
-      continue;
+    // Empty page means Horizon has no further transaction records.
+    if (transactions.length === 0) {
+      break;
     }
 
-    // The source must be the Testnet app payout wallet.
-    if (clean(tx.source_account) !== clean(sourcePublicKey)) {
-      memoMatchCouldNotBeVerified = true;
-      continue;
+    // At the configured page limit, probe one more page.
+    // If records exist, the scan is incomplete and must fail closed.
+    if (
+      transactionPageIndex ===
+      MAX_TRANSACTION_PAGES - 1
+    ) {
+      let probePage;
+
+      try {
+        probePage = await transactionPage.next();
+      } catch (error) {
+        const lookupError = new Error(
+          "TESTNET_PAYOUT_TRANSACTION_LOOKUP_FAILED"
+        );
+        lookupError.status = 503;
+        throw lookupError;
+      }
+
+      if ((probePage.records || []).length > 0) {
+        throw Object.assign(
+          new Error(
+            "TESTNET_PAYOUT_RECONCILE_SCAN_INCOMPLETE"
+          ),
+          { status: 503 }
+        );
+      }
+
+      break;
     }
 
-    let operationPage;
+    if (typeof transactionPage.next !== "function") {
+      break;
+    }
 
     try {
-      operationPage = await server
-        .operations()
-        .forTransaction(tx.hash)
-        .call();
+      transactionPage = await transactionPage.next();
     } catch (error) {
       const lookupError = new Error(
-        "TESTNET_PAYOUT_OPERATION_LOOKUP_FAILED"
+        "TESTNET_PAYOUT_TRANSACTION_LOOKUP_FAILED"
       );
       lookupError.status = 503;
       throw lookupError;
     }
 
-    const validPaymentOperation = (
-      operationPage.records || []
-    ).some((operation) => {
-      const operationAmount = numeric(operation.amount);
-
-      return (
-        operation.type === "payment" &&
-        operation.transaction_successful === true &&
-        operation.asset_type === "native" &&
-        clean(operation.from) === clean(sourcePublicKey) &&
-        clean(operation.to) === expectedWallet &&
-        operationAmount !== null &&
-        operationAmount.toFixed(7) === expectedAmount.toFixed(7)
-      );
-    });
-
-    if (validPaymentOperation) {
-      return tx;
+    if ((transactionPage.records || []).length === 0) {
+      break;
     }
-
-    // A transaction uses the memo but does not match the expected payout.
-    // Do not treat it as settled, and do not automatically send another.
-    memoMatchCouldNotBeVerified = true;
   }
 
   if (memoMatchCouldNotBeVerified) {
