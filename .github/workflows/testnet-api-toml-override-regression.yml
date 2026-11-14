@@ -11,6 +11,7 @@ on:
       - 'tests/testnet-stellar-sdk-toml-override-smoke.js'
       - 'tests/testnet-payout-wallet-guard-smoke.js'
       - 'tests/testnet-payout-post-submit-verification-smoke.js'
+      - 'tests/testnet-staker-withdrawal-settlement-hardening-smoke.js'
       - 'tests/testnet-legacy-stellar-dependency-smoke.js'
       - '.github/workflows/testnet-api-toml-override-regression.yml'
 
@@ -23,6 +24,7 @@ on:
       - 'tests/testnet-stellar-sdk-toml-override-smoke.js'
       - 'tests/testnet-payout-wallet-guard-smoke.js'
       - 'tests/testnet-payout-post-submit-verification-smoke.js'
+      - 'tests/testnet-staker-withdrawal-settlement-hardening-smoke.js'
       - 'tests/testnet-legacy-stellar-dependency-smoke.js'
       - '.github/workflows/testnet-api-toml-override-regression.yml'
 
@@ -67,6 +69,7 @@ jobs:
           node --check tests/testnet-stellar-sdk-toml-override-smoke.js
           node --check tests/testnet-payout-wallet-guard-smoke.js
           node --check tests/testnet-payout-post-submit-verification-smoke.js
+          node --check tests/testnet-staker-withdrawal-settlement-hardening-smoke.js
           node --check tests/testnet-legacy-stellar-dependency-smoke.js
 
       - name: Run legacy Stellar dependency graph contract
@@ -80,6 +83,9 @@ jobs:
 
       - name: Run Testnet post-submit Horizon payout verification regression
         run: node tests/testnet-payout-post-submit-verification-smoke.js
+
+      - name: Run Testnet staker withdrawal settlement hardening regression
+        run: node tests/testnet-staker-withdrawal-settlement-hardening-smoke.js
 
       - name: Audit dependencies and retain evidence
         if: always()
