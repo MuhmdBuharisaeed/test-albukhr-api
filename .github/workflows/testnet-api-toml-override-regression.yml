@@ -9,8 +9,8 @@ on:
       - "server.js"
       - "package.json"
       - "package-lock.json"
-      - "tests/testnet-legacy-stellar-dependency-graph-smoke.js"
-      - "tests/testnet-stellar-toml-override-compatibility-smoke.js"
+      - "tests/testnet-legacy-stellar-dependency-smoke.js"
+      - "tests/testnet-stellar-sdk-toml-override-smoke.js"
       - "tests/testnet-payout-wallet-guard-smoke.js"
       - "tests/testnet-payout-post-submit-verification-smoke.js"
       - "tests/testnet-staker-withdrawal-settlement-hardening-smoke.js"
@@ -24,8 +24,8 @@ on:
       - "server.js"
       - "package.json"
       - "package-lock.json"
-      - "tests/testnet-legacy-stellar-dependency-graph-smoke.js"
-      - "tests/testnet-stellar-toml-override-compatibility-smoke.js"
+      - "tests/testnet-legacy-stellar-dependency-smoke.js"
+      - "tests/testnet-stellar-sdk-toml-override-smoke.js"
       - "tests/testnet-payout-wallet-guard-smoke.js"
       - "tests/testnet-payout-post-submit-verification-smoke.js"
       - "tests/testnet-staker-withdrawal-settlement-hardening-smoke.js"
@@ -61,13 +61,19 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Verify TOML override
+        shell: bash
         run: |
+          set -euo pipefail
+          npm ls toml --all
+
           node -e "
           const pkg = require('toml/package.json');
+
           if (pkg.version !== '5.0.1') {
             console.error('Expected TOML 5.0.1, found:', pkg.version);
             process.exit(1);
           }
+
           console.log('TOML override verified:', pkg.version);
           "
 
@@ -76,18 +82,18 @@ jobs:
 
       - name: Check regression test syntax
         run: |
-          node --check tests/testnet-legacy-stellar-dependency-graph-smoke.js
-          node --check tests/testnet-stellar-toml-override-compatibility-smoke.js
+          node --check tests/testnet-legacy-stellar-dependency-smoke.js
+          node --check tests/testnet-stellar-sdk-toml-override-smoke.js
           node --check tests/testnet-payout-wallet-guard-smoke.js
           node --check tests/testnet-payout-post-submit-verification-smoke.js
           node --check tests/testnet-staker-withdrawal-settlement-hardening-smoke.js
           node --check tests/testnet-payout-reconciliation-pagination-smoke.js
 
       - name: Verify legacy Stellar dependency graph
-        run: node tests/testnet-legacy-stellar-dependency-graph-smoke.js
+        run: node tests/testnet-legacy-stellar-dependency-smoke.js
 
       - name: Verify Stellar SDK and TOML compatibility
-        run: node tests/testnet-stellar-toml-override-compatibility-smoke.js
+        run: node tests/testnet-stellar-sdk-toml-override-smoke.js
 
       - name: Verify Testnet payout wallet guard
         run: node tests/testnet-payout-wallet-guard-smoke.js
@@ -102,27 +108,80 @@ jobs:
         run: node tests/testnet-payout-reconciliation-pagination-smoke.js
 
       - name: Run dependency security audit
+        if: always()
+        shell: bash
         run: |
-          npm audit --json > npm-audit.json || AUDIT_EXIT=$?
-          node -e "
-          const fs = require('fs');
-          const report = JSON.parse(fs.readFileSync('npm-audit.json', 'utf8'));
-          const vulnerabilities = report.metadata?.vulnerabilities || {};
-          console.log('Dependency audit:', JSON.stringify(vulnerabilities, null, 2));
-          if ((vulnerabilities.total || 0) > 0) {
-            console.error('Dependency vulnerabilities detected.');
+          set +e
+          npm audit --json > npm-audit.json
+          audit_exit=$?
+          set -e
+
+          printf '%s\n' "$audit_exit" > npm-audit-exit-code.txt
+
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const report = JSON.parse(
+            fs.readFileSync('npm-audit.json', 'utf8')
+          );
+
+          if (report.error) {
+            console.error('npm audit could not complete:', report.error);
             process.exit(1);
           }
-          console.log('No dependency vulnerabilities detected.');
-          "
-        shell: bash
+
+          const vulnerabilities = report.vulnerabilities || {};
+          const counts = report.metadata?.vulnerabilities || {};
+
+          const result = {
+            audit_exit_code: Number(
+              fs.readFileSync('npm-audit-exit-code.txt', 'utf8').trim()
+            ),
+            vulnerability_counts: counts,
+            affected_packages: Object.entries(vulnerabilities).map(
+              ([name, item]) => ({
+                package: name,
+                severity: item.severity,
+                direct: item.isDirect,
+                range: item.range,
+                fixAvailable: item.fixAvailable,
+                nodes: item.nodes
+              })
+            )
+          };
+
+          fs.writeFileSync(
+            'npm-audit-summary.json',
+            JSON.stringify(result, null, 2)
+          );
+
+          console.log(JSON.stringify(result, null, 2));
+
+          if (
+            (counts.high || 0) > 0 ||
+            (counts.critical || 0) > 0
+          ) {
+            console.error(
+              'High or critical dependency vulnerabilities detected.'
+            );
+            process.exit(1);
+          }
+
+          console.log(
+            'No high or critical dependency vulnerabilities detected.'
+          );
+          NODE
 
       - name: Upload regression evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: testnet-api-toml-override-regression-${{ github.run_id }}
+          path: |
+            package.json
+            package-lock.json
+            npm-audit.json
+            npm-audit-summary.json
+            npm-audit-exit-code.txt
           if-no-files-found: ignore
           retention-days: 14
-          path: |
-            npm-audit.json
