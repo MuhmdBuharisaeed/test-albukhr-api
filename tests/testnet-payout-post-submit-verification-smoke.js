@@ -415,9 +415,9 @@ async function expectCode(
     ["operation sender", /operation\.from/],
     ["operation recipient", /operation\.to/],
     [
-      "exact seven-decimal amount",
-      /operationAmount\.toFixed\(7\) === expectedAmount\.toFixed\(7\)/,
-    ],
+  "exact seven-decimal amount",
+  /operationAmount\.toFixed\(7\)\s*===\s*expectedAmount\.toFixed\(7\)/,
+],
   ];
 
   for (const [label, pattern] of requiredChecks) {
