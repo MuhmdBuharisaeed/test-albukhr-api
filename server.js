@@ -745,20 +745,104 @@ async function markWithdrawalCompleted(
   requestId,
   txid
 ) {
-  if (
-    !clean(requestId) ||
-    !clean(txid)
-  ) {
+  const cleanRequestId = clean(requestId);
+  const submittedTxid = clean(txid).toLowerCase();
+
+  if (!cleanRequestId || !submittedTxid) {
     throw new Error(
       "PAYOUT_RECORDED_FAILED:Missing request ID or transaction ID."
     );
   }
 
+  if (!/^[a-f0-9]{64}$/.test(submittedTxid)) {
+    throw new Error("TESTNET_WITHDRAWAL_TXID_INVALID");
+  }
+
+  // Read the authoritative Testnet withdrawal first.
+  const withdrawal = await getWithdrawal(cleanRequestId);
+
+  if (!withdrawal) {
+    throw new Error("WITHDRAWAL_NOT_FOUND");
+  }
+
+  if (clean(withdrawal.network) !== "testnet") {
+    throw new Error("WITHDRAWAL_NETWORK_INVALID");
+  }
+
+  if (
+    !["approved", "processing", "completed"].includes(
+      clean(withdrawal.status)
+    )
+  ) {
+    throw new Error("WITHDRAWAL_NOT_READY_FOR_COMPLETION");
+  }
+
+  const expectedAmount = numeric(
+    withdrawal.net_amount ?? withdrawal.requested_amount
+  );
+
+  if (
+    !clean(withdrawal.wallet_address) ||
+    expectedAmount === null ||
+    expectedAmount <= 0
+  ) {
+    throw new Error(
+      "TESTNET_WITHDRAWAL_EXPECTED_DETAILS_INVALID"
+    );
+  }
+
+  // Independently verify the payout against Pi Testnet Horizon.
+  const sourcePublicKey = payoutWalletKeypair().publicKey();
+  const memoText = withdrawalMemo(cleanRequestId);
+
+  const verifiedPayout = await findTestnetPayoutByMemo(
+    sourcePublicKey,
+    memoText,
+    {
+      wallet_address: withdrawal.wallet_address,
+      amount: expectedAmount,
+    }
+  );
+
+  if (!verifiedPayout) {
+    throw new Error(
+      "TESTNET_WITHDRAWAL_PAYOUT_NOT_VERIFIED_ON_TESTNET"
+    );
+  }
+
+  const verifiedTxid = clean(
+    verifiedPayout.hash
+  ).toLowerCase();
+
+  if (!/^[a-f0-9]{64}$/.test(verifiedTxid)) {
+    throw new Error(
+      "TESTNET_WITHDRAWAL_VERIFIED_TXID_INVALID"
+    );
+  }
+
+  if (verifiedTxid !== submittedTxid) {
+    throw new Error(
+      "TESTNET_WITHDRAWAL_TXID_MISMATCH"
+    );
+  }
+
+  // Do not permit a completed row to be associated with another TXID.
+  if (
+    clean(withdrawal.status) === "completed" &&
+    clean(withdrawal.txid) &&
+    clean(withdrawal.txid).toLowerCase() !== verifiedTxid
+  ) {
+    throw new Error(
+      "TESTNET_WITHDRAWAL_ALREADY_COMPLETED_TXID_MISMATCH"
+    );
+  }
+
+  // The settlement RPC is reached only after Horizon verification.
   const settlement = await supabase.rpc(
     "complete_testnet_withdrawal_and_ledger",
     {
-      p_request_id: requestId,
-      p_txid: txid
+      p_request_id: cleanRequestId,
+      p_txid: verifiedTxid
     }
   );
 
@@ -780,7 +864,6 @@ async function markWithdrawalCompleted(
 
   return result;
 }
-
 
 async function markOwnerWithdrawalCompleted(requestId, txid) {
   if (!clean(requestId) || !clean(txid)) {
