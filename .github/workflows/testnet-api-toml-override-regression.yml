@@ -1,32 +1,36 @@
 
-name: ALBUKHR Testnet Legacy Stellar Dependency Regression
+name: Testnet API TOML Override Regression
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
-      - 'package.json'
-      - 'package-lock.json'
-      - 'server.js'
-      - 'tests/testnet-stellar-sdk-toml-override-smoke.js'
-      - 'tests/testnet-payout-wallet-guard-smoke.js'
-      - 'tests/testnet-payout-post-submit-verification-smoke.js'
-      - 'tests/testnet-staker-withdrawal-settlement-hardening-smoke.js'
-      - 'tests/testnet-legacy-stellar-dependency-smoke.js'
-      - '.github/workflows/testnet-api-toml-override-regression.yml'
+      - "server.js"
+      - "package.json"
+      - "package-lock.json"
+      - "tests/testnet-legacy-stellar-dependency-graph-smoke.js"
+      - "tests/testnet-stellar-toml-override-compatibility-smoke.js"
+      - "tests/testnet-payout-wallet-guard-smoke.js"
+      - "tests/testnet-payout-post-submit-verification-smoke.js"
+      - "tests/testnet-staker-withdrawal-settlement-hardening-smoke.js"
+      - "tests/testnet-payout-reconciliation-pagination-smoke.js"
+      - ".github/workflows/testnet-api-toml-override-regression.yml"
 
   pull_request:
-    branches: [main]
+    branches:
+      - main
     paths:
-      - 'package.json'
-      - 'package-lock.json'
-      - 'server.js'
-      - 'tests/testnet-stellar-sdk-toml-override-smoke.js'
-      - 'tests/testnet-payout-wallet-guard-smoke.js'
-      - 'tests/testnet-payout-post-submit-verification-smoke.js'
-      - 'tests/testnet-staker-withdrawal-settlement-hardening-smoke.js'
-      - 'tests/testnet-legacy-stellar-dependency-smoke.js'
-      - '.github/workflows/testnet-api-toml-override-regression.yml'
+      - "server.js"
+      - "package.json"
+      - "package-lock.json"
+      - "tests/testnet-legacy-stellar-dependency-graph-smoke.js"
+      - "tests/testnet-stellar-toml-override-compatibility-smoke.js"
+      - "tests/testnet-payout-wallet-guard-smoke.js"
+      - "tests/testnet-payout-post-submit-verification-smoke.js"
+      - "tests/testnet-staker-withdrawal-settlement-hardening-smoke.js"
+      - "tests/testnet-payout-reconciliation-pagination-smoke.js"
+      - ".github/workflows/testnet-api-toml-override-regression.yml"
 
   workflow_dispatch:
 
@@ -34,112 +38,91 @@ permissions:
   contents: read
 
 concurrency:
-  group: testnet-api-legacy-stellar-regression-${{ github.ref }}
+  group: testnet-api-toml-override-regression-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  dependency-regression:
-    name: Verify legacy Stellar payout and dependency security
+  testnet-api-regression:
+    name: Testnet API Regression
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
-      - name: Checkout Testnet API repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: "22"
           cache: npm
 
-      - name: Install exact committed dependency tree
+      - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Verify the resolved TOML version
-        shell: bash
+      - name: Verify TOML override
         run: |
-          set -euo pipefail
-          npm ls toml --all
-          node -e "const p=require('toml/package.json'); if(p.version!=='5.0.1') { console.error('Unexpected toml version:',p.version); process.exit(1); }"
+          node -e "
+          const pkg = require('toml/package.json');
+          if (pkg.version !== '5.0.1') {
+            console.error('Expected TOML 5.0.1, found:', pkg.version);
+            process.exit(1);
+          }
+          console.log('TOML override verified:', pkg.version);
+          "
 
-      - name: Check JavaScript syntax
+      - name: Check server syntax
+        run: node --check server.js
+
+      - name: Check regression test syntax
         run: |
-          node --check server.js
-          node --check tests/testnet-stellar-sdk-toml-override-smoke.js
+          node --check tests/testnet-legacy-stellar-dependency-graph-smoke.js
+          node --check tests/testnet-stellar-toml-override-compatibility-smoke.js
           node --check tests/testnet-payout-wallet-guard-smoke.js
           node --check tests/testnet-payout-post-submit-verification-smoke.js
           node --check tests/testnet-staker-withdrawal-settlement-hardening-smoke.js
-          node --check tests/testnet-legacy-stellar-dependency-smoke.js
+          node --check tests/testnet-payout-reconciliation-pagination-smoke.js
 
-      - name: Run legacy Stellar dependency graph contract
-        run: node tests/testnet-legacy-stellar-dependency-smoke.js
+      - name: Verify legacy Stellar dependency graph
+        run: node tests/testnet-legacy-stellar-dependency-graph-smoke.js
 
-      - name: Run Stellar SDK and TOML compatibility smoke test
-        run: node tests/testnet-stellar-sdk-toml-override-smoke.js
+      - name: Verify Stellar SDK and TOML compatibility
+        run: node tests/testnet-stellar-toml-override-compatibility-smoke.js
 
-      - name: Run Testnet payout-wallet guard regression
+      - name: Verify Testnet payout wallet guard
         run: node tests/testnet-payout-wallet-guard-smoke.js
 
-      - name: Run Testnet post-submit Horizon payout verification regression
+      - name: Verify post-submit Horizon payout verification
         run: node tests/testnet-payout-post-submit-verification-smoke.js
 
-      - name: Run Testnet staker withdrawal settlement hardening regression
+      - name: Verify staker withdrawal settlement hardening
         run: node tests/testnet-staker-withdrawal-settlement-hardening-smoke.js
 
-      - name: Audit dependencies and retain evidence
-        if: always()
-        shell: bash
+      - name: Verify bounded Horizon payout reconciliation pagination
+        run: node tests/testnet-payout-reconciliation-pagination-smoke.js
+
+      - name: Run dependency security audit
         run: |
-          set +e
-          npm audit --json > npm-audit.json
-          audit_exit=$?
-          printf '%s\n' "$audit_exit" > npm-audit-exit-code.txt
-          set -e
-
-          node <<'NODE'
-          const fs = require('node:fs');
+          npm audit --json > npm-audit.json || AUDIT_EXIT=$?
+          node -e "
+          const fs = require('fs');
           const report = JSON.parse(fs.readFileSync('npm-audit.json', 'utf8'));
-          const vulnerabilities = report.vulnerabilities || {};
-          const counts = report.metadata?.vulnerabilities || {};
-
-          const result = {
-            audit_exit_code: Number(
-              fs.readFileSync('npm-audit-exit-code.txt', 'utf8').trim()
-            ),
-            vulnerability_counts: counts,
-            affected_packages: Object.entries(vulnerabilities).map(([name, item]) => ({
-              package: name,
-              severity: item.severity,
-              direct: item.isDirect,
-              range: item.range,
-              fixAvailable: item.fixAvailable,
-              nodes: item.nodes
-            }))
-          };
-
-          fs.writeFileSync(
-            'npm-audit-summary.json',
-            JSON.stringify(result, null, 2)
-          );
-
-          console.log(JSON.stringify(result, null, 2));
-
-          if ((counts.high || 0) > 0 || (counts.critical || 0) > 0) {
-            process.exitCode = 1;
+          const vulnerabilities = report.metadata?.vulnerabilities || {};
+          console.log('Dependency audit:', JSON.stringify(vulnerabilities, null, 2));
+          if ((vulnerabilities.total || 0) > 0) {
+            console.error('Dependency vulnerabilities detected.');
+            process.exit(1);
           }
-          NODE
+          console.log('No dependency vulnerabilities detected.');
+          "
+        shell: bash
 
-      - name: Upload dependency verification evidence
+      - name: Upload regression evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: albukhr-testnet-legacy-stellar-verification
-          path: |
-            package.json
-            package-lock.json
-            npm-audit.json
-            npm-audit-summary.json
-            npm-audit-exit-code.txt
-          if-no-files-found: warn
+          name: testnet-api-toml-override-regression-${{ github.run_id }}
+          if-no-files-found: ignore
           retention-days: 14
+          path: |
+            npm-audit.json
