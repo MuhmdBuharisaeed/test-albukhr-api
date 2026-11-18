@@ -919,79 +919,293 @@ function assertAdminProjectScope(adminSession, project) {
     return latest;
   }
 
-  async function writeVerifiedPayment(payment, context, piUser, txid) {
+    async function writeVerifiedPayment(payment, context, piUser, txid) {
+    const intent = context && context.intent;
+    const treasury = context && context.treasury;
+
     const id = paymentId(payment);
+    const verifiedTxid = clean(txid);
+    const recipientWallet = clean(treasury && treasury.treasury_wallet);
+    const testnetPiUid = clean(piUser && piUser.uid);
+    const payerPiUid = clean(intent && intent.pi_uid);
+    const amount = Number(intent && intent.amount);
+
+    if (
+      !intent ||
+      !id ||
+      !verifiedTxid ||
+      !recipientWallet ||
+      !testnetPiUid ||
+      !payerPiUid ||
+      !Number.isFinite(amount) ||
+      amount <= 0 ||
+      !clean(intent.project_id) ||
+      !clean(intent.project_code) ||
+      !clean(intent.id) ||
+      !clean(intent.duration_days)
+    ) {
+      throw new Error("STAKE_PAYMENT_EVIDENCE_CONFLICT");
+    }
+
+    const expectedMetadata = {
+      network: NETWORK,
+      action: "stake",
+      project_id: clean(intent.project_id),
+      project_code: clean(intent.project_code),
+      duration_days: clean(intent.duration_days),
+      stake_intent_id: clean(intent.id),
+      testnet_pi_uid: testnetPiUid,
+      txid: verifiedTxid,
+    };
+
+    const now = new Date().toISOString();
+
     const payload = {
       payment_id: id,
-      project_id: context.intent.project_id,
-      project_code: context.intent.project_code,
-      payer_pi_uid: clean(context.intent.pi_uid),
-      amount: Number(context.intent.amount),
-      recipient_wallet: context.treasury.treasury_wallet,
+      project_id: intent.project_id,
+      project_code: intent.project_code,
+      payer_pi_uid: payerPiUid,
+      amount,
+      recipient_wallet: recipientWallet,
       network: NETWORK,
       action: "stake",
       pi_status: "completed",
       verification_status: "verified",
-      txid: clean(txid),
-      verified_at: new Date().toISOString(),
-      verification_reference: clean(txid),
+      txid: verifiedTxid,
+      verified_at: now,
+      verification_reference: verifiedTxid,
       metadata: {
-        network: NETWORK,
-        action: "stake",
-        project_id: context.intent.project_id,
-        project_code: context.intent.project_code,
-        duration_days: context.intent.duration_days,
-        stake_intent_id: context.intent.id,
-        username: clean(piUser.username) || null,
-        // Keep the Pi Sandbox identity separate from the canonical ALBUKHR UID.
-        testnet_pi_uid: clean(piUser.uid) || null,
-        txid: clean(txid),
+        ...expectedMetadata,
+        username: clean(piUser && piUser.username) || null,
       },
-      updated_at: new Date().toISOString(),
+      updated_at: now,
     };
 
-    const existingResult = await supabase
-      .from("testnet_stake_payments")
-      .select("id,payment_id,project_id,project_code,payer_pi_uid,amount,recipient_wallet,network,action,pi_status,verification_status,txid")
-      .eq("payment_id", id).eq("network", NETWORK).maybeSingle();
+    const metadataOf = (row) => {
+      return row &&
+        row.metadata &&
+        typeof row.metadata === "object" &&
+        !Array.isArray(row.metadata)
+        ? row.metadata
+        : {};
+    };
 
-    if (existingResult.error) throw new Error("STAKE_PAYMENT_READ_FAILED");
-    const existing = existingResult.data;
-    if (existing) {
-      if (existing.project_id !== payload.project_id ||
-          existing.project_code !== payload.project_code ||
-          existing.payer_pi_uid !== payload.payer_pi_uid ||
-          Math.abs(Number(existing.amount) - payload.amount) > 0.0000001 ||
-          existing.action !== "stake" || existing.network !== NETWORK) {
+    const validatePaymentRecordIdentity = (row) => {
+      const storedAmount = Number(row && row.amount);
+
+      if (
+        !row ||
+        clean(row.payment_id) !== id ||
+        clean(row.project_id) !== clean(intent.project_id) ||
+        clean(row.project_code) !== clean(intent.project_code) ||
+        clean(row.payer_pi_uid) !== payerPiUid ||
+        !Number.isFinite(storedAmount) ||
+        Math.abs(storedAmount - amount) > 0.0000001 ||
+        clean(row.action) !== "stake" ||
+        clean(row.network) !== NETWORK
+      ) {
         throw new Error("STAKE_PAYMENT_RECORD_MISMATCH");
       }
-      const { data, error } = await supabase
+    };
+
+    const validateCompatiblePaymentEvidence = (row) => {
+      const existingMetadata = metadataOf(row);
+
+      const evidenceFields = [
+        [row.txid, verifiedTxid],
+        [row.recipient_wallet, recipientWallet],
+        [row.verification_reference, verifiedTxid],
+      ];
+
+      for (const [storedValue, expectedValue] of evidenceFields) {
+        if (
+          storedValue !== null &&
+          typeof storedValue !== "undefined" &&
+          clean(storedValue) !== "" &&
+          clean(storedValue) !== expectedValue
+        ) {
+          throw new Error("STAKE_PAYMENT_EVIDENCE_CONFLICT");
+        }
+      }
+
+      for (const [key, expectedValue] of Object.entries(expectedMetadata)) {
+        const storedValue = clean(existingMetadata[key]);
+
+        if (
+          storedValue &&
+          storedValue !== clean(expectedValue)
+        ) {
+          throw new Error("STAKE_PAYMENT_EVIDENCE_CONFLICT");
+        }
+      }
+    };
+
+    const validateVerifiedPaymentRecord = (row) => {
+      validatePaymentRecordIdentity(row);
+      validateCompatiblePaymentEvidence(row);
+
+      const storedMetadata = metadataOf(row);
+
+      const metadataComplete = Object.entries(expectedMetadata).every(
+        ([key, expectedValue]) =>
+          clean(storedMetadata[key]) === clean(expectedValue)
+      );
+
+      if (
+        clean(row.verification_status) !== "verified" ||
+        clean(row.pi_status) !== "completed" ||
+        clean(row.txid) !== verifiedTxid ||
+        !row.verified_at ||
+        clean(row.verification_reference) !== verifiedTxid ||
+        clean(row.recipient_wallet) !== recipientWallet ||
+        !metadataComplete
+      ) {
+        throw new Error("STAKE_PAYMENT_EVIDENCE_CONFLICT");
+      }
+
+      return row;
+    };
+
+    const readExistingPayment = async () => {
+      return await supabase
         .from("testnet_stake_payments")
-        .update(payload).eq("id", existing.id).eq("network", NETWORK)
-        .select("*").maybeSingle();
-      if (error || !data) throw new Error("STAKE_PAYMENT_RECORD_WRITE_FAILED");
-      return data;
+        .select("*")
+        .eq("payment_id", id)
+        .eq("network", NETWORK)
+        .maybeSingle();
+    };
+
+    const existingResult = await readExistingPayment();
+
+    if (existingResult.error) {
+      throw new Error("STAKE_PAYMENT_READ_FAILED");
     }
 
-    const { data, error } = await supabase
-      .from("testnet_stake_payments")
-      .insert(payload).select("*").maybeSingle();
-    if (!error && data) return data;
+    const existing = existingResult.data;
 
-    // A duplicate callback may race the first insert. Re-read and validate it.
-    const reread = await supabase
-      .from("testnet_stake_payments")
-      .select("*").eq("payment_id", id).eq("network", NETWORK).maybeSingle();
-    if (reread.error || !reread.data) throw new Error("STAKE_PAYMENT_RECORD_WRITE_FAILED");
-    if (reread.data.project_id !== payload.project_id ||
-        reread.data.project_code !== payload.project_code ||
-        reread.data.payer_pi_uid !== payload.payer_pi_uid ||
-        Math.abs(Number(reread.data.amount) - payload.amount) > 0.0000001) {
-      throw new Error("STAKE_PAYMENT_RECORD_MISMATCH");
+    if (existing) {
+      validatePaymentRecordIdentity(existing);
+      validateCompatiblePaymentEvidence(existing);
+
+      // An already-verified record is immutable in this recovery path.
+      // Validate it and return it without overwriting its historical evidence.
+      if (existing.verification_status === "verified") {
+        validateVerifiedPaymentRecord(existing);
+        return existing;
+      }
+
+      // Preserve additional metadata already attached to the incomplete row.
+      const updatePayload = {
+        ...payload,
+        metadata: {
+          ...metadataOf(existing),
+          ...payload.metadata,
+        },
+      };
+
+      // Prevent a stale recovery request from overwriting evidence written
+      // by another concurrent request.
+      let updateQuery = supabase
+        .from("testnet_stake_payments")
+        .update(updatePayload)
+        .eq("id", existing.id)
+        .eq("network", NETWORK)
+        .or("verification_status.is.null,verification_status.neq.verified");
+
+      if (
+        existing.txid === null ||
+        typeof existing.txid === "undefined"
+      ) {
+        updateQuery = updateQuery.is("txid", null);
+      } else {
+        updateQuery = updateQuery.eq("txid", existing.txid);
+      }
+
+      if (
+        existing.recipient_wallet === null ||
+        typeof existing.recipient_wallet === "undefined"
+      ) {
+        updateQuery = updateQuery.is("recipient_wallet", null);
+      } else {
+        updateQuery = updateQuery.eq(
+          "recipient_wallet",
+          existing.recipient_wallet
+        );
+      }
+
+      if (
+        existing.verification_reference === null ||
+        typeof existing.verification_reference === "undefined"
+      ) {
+        updateQuery = updateQuery.is("verification_reference", null);
+      } else {
+        updateQuery = updateQuery.eq(
+          "verification_reference",
+          existing.verification_reference
+        );
+      }
+
+      const updateResult = await updateQuery
+        .select("*")
+        .maybeSingle();
+
+      if (!updateResult.error && updateResult.data) {
+        validateVerifiedPaymentRecord(updateResult.data);
+        return updateResult.data;
+      }
+
+      // The update may have lost a race to another verified callback.
+      // Re-read before deciding whether the recovery failed.
+      const latestResult = await readExistingPayment();
+
+      if (latestResult.error) {
+        throw new Error("STAKE_PAYMENT_READ_FAILED");
+      }
+
+      const latest = latestResult.data;
+
+      if (latest) {
+        validatePaymentRecordIdentity(latest);
+        validateCompatiblePaymentEvidence(latest);
+
+        if (latest.verification_status === "verified") {
+          validateVerifiedPaymentRecord(latest);
+          return latest;
+        }
+      }
+
+      throw new Error("STAKE_PAYMENT_RECORD_WRITE_FAILED");
     }
-    return reread.data;
-  }
 
+    // No record exists yet: create the verified evidence record.
+    const insertResult = await supabase
+      .from("testnet_stake_payments")
+      .insert(payload)
+      .select("*")
+      .maybeSingle();
+
+    if (!insertResult.error && insertResult.data) {
+      validateVerifiedPaymentRecord(insertResult.data);
+      return insertResult.data;
+    }
+
+    // Handle a duplicate callback that raced the first insert.
+    const reread = await readExistingPayment();
+
+    if (reread.error || !reread.data) {
+      throw new Error("STAKE_PAYMENT_RECORD_WRITE_FAILED");
+    }
+
+    validatePaymentRecordIdentity(reread.data);
+    validateCompatiblePaymentEvidence(reread.data);
+
+    if (reread.data.verification_status === "verified") {
+      validateVerifiedPaymentRecord(reread.data);
+      return reread.data;
+    }
+
+    throw new Error("STAKE_PAYMENT_RECORD_WRITE_FAILED");
+          }
   
   // ============================================================
   // TESTNET ADMIN — GLOBAL STAKING PROJECT STAGES
